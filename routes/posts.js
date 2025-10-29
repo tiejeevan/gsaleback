@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
+const multer = require('multer');
+const AWS = require('aws-sdk');
+require('dotenv').config({ path: '.env' });
 
 // ================= Middleware: Verify Token =================
 const verifyToken = (req, res, next) => {
@@ -18,6 +21,19 @@ const verifyToken = (req, res, next) => {
     }
 };
 
+// Multer memory storage for file uploads
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
+
+// Cloudflare R2 client
+const s3 = new AWS.S3({
+    endpoint: new AWS.Endpoint(process.env.R2_ENDPOINT),
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    signatureVersion: 'v4',
+    region: 'auto',
+});
+
 // ================= Helper: Log Post Activity =================
 const logPostActivity = async ({ userId, postId, type, success, req }) => {
     try {
@@ -31,52 +47,94 @@ const logPostActivity = async ({ userId, postId, type, success, req }) => {
     }
 };
 
-// ====================================================================
-// 🟢 CORE ENDPOINTS (Create, Read, Update, Delete)
-// ====================================================================
+// ================= Create a new post with attachments =================
+router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
+    const { content, visibility = 'public' } = req.body;
 
-// ✅ Create a new post
-router.post('/', verifyToken, async (req, res) => {
-    const { content, image_url, visibility = 'public' } = req.body;
-
-    if (!content || content.trim() === '') {
-        return res.status(400).json({ error: 'Post content cannot be empty' });
+    if (!content || content.trim() === '' && (!req.files || req.files.length === 0)) {
+        return res.status(400).json({ error: 'Post content or files cannot be empty' });
     }
 
     try {
-        const result = await pool.query(
-            `INSERT INTO posts (user_id, content, image_url, visibility)
-             VALUES ($1, $2, $3, $4)
+        // 1️⃣ Insert post first
+        const postResult = await pool.query(
+            `INSERT INTO posts (user_id, content, visibility)
+             VALUES ($1, $2, $3)
              RETURNING *`,
-            [req.user.id, content, image_url || null, visibility]
+            [req.user.id, content || null, visibility]
         );
 
-        await logPostActivity({ userId: req.user.id, postId: result.rows[0].id, type: 'create', success: true, req });
-        res.status(201).json(result.rows[0]);
+        const post = postResult.rows[0];
+
+        // 2️⃣ If files were uploaded, save them to R2 and link to attachments table
+        if (req.files && req.files.length > 0) {
+            const attachmentPromises = req.files.map(async (file) => {
+                const key = `${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`;
+                const params = {
+                    Bucket: process.env.R2_BUCKET_NAME,
+                    Key: key,
+                    Body: file.buffer,
+                    ContentType: file.mimetype,
+                };
+                await s3.upload(params).promise();
+
+                const fileUrl = `${process.env.R2_ENDPOINT}/${process.env.R2_BUCKET_NAME}/${key}`;
+
+                // Save attachment record in DB
+                await pool.query(
+                    `INSERT INTO attachments (post_id, file_name, file_url)
+                     VALUES ($1, $2, $3)`,
+                    [post.id, file.originalname, fileUrl]
+                );
+
+                return { file_name: file.originalname, url: fileUrl };
+            });
+
+            const uploadedFiles = await Promise.all(attachmentPromises);
+            post.attachments = uploadedFiles; // attach to response
+        } else {
+            post.attachments = [];
+        }
+
+        await logPostActivity({ userId: req.user.id, postId: post.id, type: 'create', success: true, req });
+
+        res.status(201).json(post);
     } catch (err) {
-        console.error(err.message);
-        res.status(500).json({ error: 'Failed to create post' });
+        console.error(err);
+        res.status(500).json({ error: 'Failed to create post', details: err.message });
     }
 });
 
-// ✅ Get all visible posts (feed)
+// ================= Get all posts with attachments =================
 router.get('/', verifyToken, async (req, res) => {
     try {
-        const result = await pool.query(
+        const postsResult = await pool.query(
             `SELECT p.*, u.username, u.first_name, u.last_name
              FROM posts p
              JOIN users u ON p.user_id = u.id
              WHERE p.is_deleted = false
              ORDER BY p.created_at DESC`
         );
-        res.json(result.rows);
+
+        const posts = await Promise.all(postsResult.rows.map(async (post) => {
+            const attachResult = await pool.query(
+                `SELECT id, file_name, file_url, uploaded_at
+                 FROM attachments
+                 WHERE post_id = $1`,
+                [post.id]
+            );
+            post.attachments = attachResult.rows;
+            return post;
+        }));
+
+        res.json(posts);
     } catch (err) {
-        console.error(err.message);
+        console.error(err);
         res.status(500).json({ error: 'Failed to fetch posts' });
     }
 });
 
-// ✅ Get a single post by ID
+// ================= Get a single post by ID =================
 router.get('/:id', verifyToken, async (req, res) => {
     try {
         const result = await pool.query(
@@ -87,28 +145,38 @@ router.get('/:id', verifyToken, async (req, res) => {
             [req.params.id]
         );
         if (result.rows.length === 0) return res.status(404).json({ error: 'Post not found' });
-        res.json(result.rows[0]);
+
+        const attachResult = await pool.query(
+            `SELECT id, file_name, file_url, uploaded_at
+             FROM attachments
+             WHERE post_id = $1`,
+            [req.params.id]
+        );
+
+        const post = result.rows[0];
+        post.attachments = attachResult.rows;
+
+        res.json(post);
     } catch (err) {
-        console.error(err.message);
+        console.error(err);
         res.status(500).json({ error: 'Failed to fetch post' });
     }
 });
 
-// ✅ Update a post
+// ================= Update a post =================
 router.put('/:id', verifyToken, async (req, res) => {
-    const { content, image_url, visibility } = req.body;
+    const { content, visibility } = req.body;
 
     try {
         const result = await pool.query(
             `UPDATE posts
              SET content = COALESCE($1, content),
-                 image_url = COALESCE($2, image_url),
-                 visibility = COALESCE($3, visibility),
+                 visibility = COALESCE($2, visibility),
                  is_edited = true,
                  updated_at = CURRENT_TIMESTAMP
-             WHERE id = $4 AND user_id = $5
+             WHERE id = $3 AND user_id = $4
              RETURNING *`,
-            [content, image_url, visibility, req.params.id, req.user.id]
+            [content, visibility, req.params.id, req.user.id]
         );
 
         if (result.rows.length === 0)
@@ -117,12 +185,12 @@ router.put('/:id', verifyToken, async (req, res) => {
         await logPostActivity({ userId: req.user.id, postId: req.params.id, type: 'edit', success: true, req });
         res.json(result.rows[0]);
     } catch (err) {
-        console.error(err.message);
+        console.error(err);
         res.status(500).json({ error: 'Failed to update post' });
     }
 });
 
-// ✅ Soft delete a post
+// ================= Soft delete a post =================
 router.delete('/:id', verifyToken, async (req, res) => {
     try {
         const result = await pool.query(
@@ -136,30 +204,38 @@ router.delete('/:id', verifyToken, async (req, res) => {
         await logPostActivity({ userId: req.user.id, postId: req.params.id, type: 'delete', success: true, req });
         res.json({ msg: 'Post deleted successfully' });
     } catch (err) {
-        console.error(err.message);
+        console.error(err);
         res.status(500).json({ error: 'Failed to delete post' });
     }
 });
 
-// ====================================================================
-// 🔵 OPTIONAL ENDPOINTS (Future-Proof Extensions)
-// ====================================================================
-
-// ✅ Get all posts by a specific user
+// ================= Get all posts by a specific user =================
 router.get('/user/:userId', verifyToken, async (req, res) => {
     try {
-        const result = await pool.query(
+        const postsResult = await pool.query(
             `SELECT * FROM posts WHERE user_id = $1 AND is_deleted = false ORDER BY created_at DESC`,
             [req.params.userId]
         );
-        res.json(result.rows);
+
+        const posts = await Promise.all(postsResult.rows.map(async (post) => {
+            const attachResult = await pool.query(
+                `SELECT id, file_name, file_url, uploaded_at
+                 FROM attachments
+                 WHERE post_id = $1`,
+                [post.id]
+            );
+            post.attachments = attachResult.rows;
+            return post;
+        }));
+
+        res.json(posts);
     } catch (err) {
-        console.error(err.message);
+        console.error(err);
         res.status(500).json({ error: 'Failed to fetch user posts' });
     }
 });
 
-// ✅ Like a post (increments like_count)
+// ================= Like a post =================
 router.post('/:id/like', verifyToken, async (req, res) => {
     try {
         const result = await pool.query(
@@ -175,12 +251,12 @@ router.post('/:id/like', verifyToken, async (req, res) => {
         await logPostActivity({ userId: req.user.id, postId: req.params.id, type: 'like', success: true, req });
         res.json(result.rows[0]);
     } catch (err) {
-        console.error(err.message);
+        console.error(err);
         res.status(500).json({ error: 'Failed to like post' });
     }
 });
 
-// ✅ Unlike a post (decrements like_count safely)
+// ================= Unlike a post =================
 router.post('/:id/unlike', verifyToken, async (req, res) => {
     try {
         const result = await pool.query(
@@ -196,7 +272,7 @@ router.post('/:id/unlike', verifyToken, async (req, res) => {
         await logPostActivity({ userId: req.user.id, postId: req.params.id, type: 'unlike', success: true, req });
         res.json(result.rows[0]);
     } catch (err) {
-        console.error(err.message);
+        console.error(err);
         res.status(500).json({ error: 'Failed to unlike post' });
     }
 });
