@@ -14,6 +14,7 @@ app.use(express.json());
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/posts', require('./routes/posts'));
 app.use("/api/upload", uploadRoute);
+app.use('/api/likes', require('./routes/likes'));
 
 // Start server
 const PORT = process.env.PORT || 5000;

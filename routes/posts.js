@@ -212,28 +212,69 @@ router.delete('/:id', verifyToken, async (req, res) => {
 // ================= Get all posts by a specific user =================
 router.get('/user/:userId', verifyToken, async (req, res) => {
     try {
+        const userId = req.user.id; // current logged-in user
+
         const postsResult = await pool.query(
-            `SELECT * FROM posts WHERE user_id = $1 AND is_deleted = false ORDER BY created_at DESC`,
+            `SELECT * FROM posts 
+             WHERE user_id = $1 AND is_deleted = false 
+             ORDER BY created_at DESC`,
             [req.params.userId]
         );
 
-        const posts = await Promise.all(postsResult.rows.map(async (post) => {
-            const attachResult = await pool.query(
-                `SELECT id, file_name, file_url, uploaded_at
-                 FROM attachments
-                 WHERE post_id = $1`,
-                [post.id]
-            );
-            post.attachments = attachResult.rows;
-            return post;
-        }));
+        const posts = await Promise.all(
+            postsResult.rows.map(async (post) => {
+                // Fetch attachments
+                const attachResult = await pool.query(
+                    `SELECT id, file_name, file_url, uploaded_at
+                     FROM attachments
+                     WHERE post_id = $1`,
+                    [post.id]
+                );
+
+                // Fetch like count
+                const likeCountResult = await pool.query(
+                    `SELECT COUNT(*) AS like_count
+                     FROM likes
+                     WHERE target_type = 'post' AND target_id = $1`,
+                    [post.id]
+                );
+
+                // ✅ Fetch full like details
+                const likesResult = await pool.query(
+                    `SELECT 
+                        l.id AS like_id,
+                        l.user_id,
+                        l.reaction_type,
+                        l.created_at,
+                        u.username
+                     FROM likes l
+                     JOIN users u ON l.user_id = u.id
+                     WHERE l.target_type = 'post' AND l.target_id = $1
+                     ORDER BY l.created_at DESC`,
+                    [post.id]
+                );
+
+                // ✅ Check if current user already liked this post
+                const userLiked = likesResult.rows.some(like => like.user_id === userId);
+
+                post.like_count = parseInt(likeCountResult.rows[0].like_count, 10) || 0;
+                post.likes = likesResult.rows; // detailed info
+                post.attachments = attachResult.rows;
+                post.liked_by_user = userLiked; // ← new flag
+
+                return post;
+            })
+        );
 
         res.json(posts);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Failed to fetch user posts' });
+        console.error('Error fetching user posts with like details:', err);
+        res.status(500).json({ error: 'Failed to fetch user posts with like details' });
     }
 });
+
+
+
 
 // ================= Like a post =================
 router.post('/:id/like', verifyToken, async (req, res) => {
