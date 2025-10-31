@@ -105,34 +105,67 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
     }
 });
 
-// ================= Get all posts with attachments =================
+// ================= Get all posts with likes, attachments, and liked_by_user =================
 router.get('/', verifyToken, async (req, res) => {
     try {
-        const postsResult = await pool.query(
-            `SELECT p.*, u.username, u.first_name, u.last_name
-             FROM posts p
-             JOIN users u ON p.user_id = u.id
-             WHERE p.is_deleted = false
-             ORDER BY p.created_at DESC`
-        );
-
-        const posts = await Promise.all(postsResult.rows.map(async (post) => {
-            const attachResult = await pool.query(
-                `SELECT id, file_name, file_url, uploaded_at
-                 FROM attachments
-                 WHERE post_id = $1`,
-                [post.id]
-            );
-            post.attachments = attachResult.rows;
-            return post;
-        }));
-
-        res.json(posts);
+      const userId = req.user.id; // from verifyToken middleware
+  
+      // Fetch all posts + user info
+      const postsResult = await pool.query(
+        `SELECT p.*, u.username, u.first_name, u.last_name
+         FROM posts p
+         JOIN users u ON p.user_id = u.id
+         WHERE p.is_deleted = false
+         ORDER BY p.created_at DESC`
+      );
+  
+      // For each post, attach attachments + like data
+      const posts = await Promise.all(
+        postsResult.rows.map(async (post) => {
+          // 1️⃣ Get attachments
+          const attachResult = await pool.query(
+            `SELECT id, file_name, file_url, uploaded_at
+             FROM attachments
+             WHERE post_id = $1`,
+            [post.id]
+          );
+  
+          // 2️⃣ Get like count
+          const likeCountResult = await pool.query(
+            `SELECT COUNT(*) AS like_count
+             FROM likes
+             WHERE target_type = 'post' AND target_id = $1`,
+            [post.id]
+          );
+  
+          // 3️⃣ Get list of likes (who liked)
+          const likesResult = await pool.query(
+            `SELECT user_id
+             FROM likes
+             WHERE target_type = 'post' AND target_id = $1`,
+            [post.id]
+          );
+  
+          // 4️⃣ Check if current user liked it
+          const userLiked = likesResult.rows.some((like) => like.user_id === userId);
+  
+          // ✅ Add computed fields
+          post.like_count = parseInt(likeCountResult.rows[0].like_count, 10) || 0;
+          post.likes = likesResult.rows; // store user_ids who liked
+          post.attachments = attachResult.rows;
+          post.liked_by_user = userLiked;
+  
+          return post;
+        })
+      );
+  
+      res.json(posts);
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Failed to fetch posts' });
+      console.error('Error fetching posts with likes:', err);
+      res.status(500).json({ error: 'Failed to fetch posts' });
     }
-});
+  });
+  
 
 // ================= Get a single post by ID =================
 router.get('/:id', verifyToken, async (req, res) => {
