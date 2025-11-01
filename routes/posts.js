@@ -245,13 +245,16 @@ router.delete('/:id', verifyToken, async (req, res) => {
 // ================= Get all posts by a specific user =================
 router.get('/user/:userId', verifyToken, async (req, res) => {
     try {
-        const userId = req.user.id; // current logged-in user
+        const currentUserId = req.user.id; // logged-in user
+        const targetUserId = req.params.userId; // posts we want
 
         const postsResult = await pool.query(
-            `SELECT * FROM posts 
-             WHERE user_id = $1 AND is_deleted = false 
-             ORDER BY created_at DESC`,
-            [req.params.userId]
+            `SELECT p.*, u.username, u.first_name, u.last_name
+             FROM posts p
+             JOIN users u ON p.user_id = u.id
+             WHERE p.user_id = $1 AND p.is_deleted = false
+             ORDER BY p.created_at DESC`,
+            [targetUserId]
         );
 
         const posts = await Promise.all(
@@ -272,7 +275,7 @@ router.get('/user/:userId', verifyToken, async (req, res) => {
                     [post.id]
                 );
 
-                // ✅ Fetch full like details
+                // Fetch detailed likes
                 const likesResult = await pool.query(
                     `SELECT 
                         l.id AS like_id,
@@ -287,13 +290,13 @@ router.get('/user/:userId', verifyToken, async (req, res) => {
                     [post.id]
                 );
 
-                // ✅ Check if current user already liked this post
-                const userLiked = likesResult.rows.some(like => like.user_id === userId);
+                // Check if current user liked it
+                const userLiked = likesResult.rows.some(like => like.user_id === currentUserId);
 
                 post.like_count = parseInt(likeCountResult.rows[0].like_count, 10) || 0;
-                post.likes = likesResult.rows; // detailed info
+                post.likes = likesResult.rows;
                 post.attachments = attachResult.rows;
-                post.liked_by_user = userLiked; // ← new flag
+                post.liked_by_user = userLiked;
 
                 return post;
             })
@@ -305,6 +308,7 @@ router.get('/user/:userId', verifyToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch user posts with like details' });
     }
 });
+
 
 
 
