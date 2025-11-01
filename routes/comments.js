@@ -234,29 +234,71 @@ router.put('/:id', verifyToken, async (req, res) => {
   }
 });
 
-// ================= Soft delete a comment =================
+// ================= Soft delete a comment (with nested replies) =================
 router.delete('/:id', verifyToken, async (req, res) => {
-  const { id } = req.params;
-  try {
-    const commentRes = await pool.query(`SELECT * FROM comments WHERE id = $1`, [id]);
-    if (!commentRes.rows.length) return res.status(404).json({ error: 'Comment not found' });
-    const comment = commentRes.rows[0];
-
-    if (comment.user_id !== req.user.id) return res.status(403).json({ error: 'Unauthorized' });
-
-    await pool.query(`UPDATE comments SET is_deleted = true WHERE id = $1`, [id]);
-
-    // Optionally decrement post comment_count (ensure not negative)
-    await pool.query(`UPDATE posts SET comment_count = GREATEST(comment_count - 1, 0) WHERE id = $1`, [comment.post_id]);
-
-    await logCommentActivity({ userId: req.user.id, commentId: id, type: 'delete', success: true, req });
-
-    res.json({ msg: 'Comment deleted successfully' });
-  } catch (err) {
-    console.error('Delete comment error:', err);
-    res.status(500).json({ error: 'Failed to delete comment', details: err.message });
-  }
-});
+    const { id } = req.params;
+  
+    try {
+      // 1️⃣ Fetch the comment
+      const commentRes = await pool.query(`SELECT * FROM comments WHERE id = $1`, [id]);
+      if (!commentRes.rows.length)
+        return res.status(404).json({ error: 'Comment not found' });
+  
+      const comment = commentRes.rows[0];
+  
+      // 2️⃣ Check ownership
+      if (comment.user_id !== req.user.id)
+        return res.status(403).json({ error: 'Unauthorized' });
+  
+      // 3️⃣ Recursively fetch all child comments
+      const getAllChildComments = async (parentIds = []) => {
+        if (parentIds.length === 0) return [];
+        const res = await pool.query(
+          `SELECT id FROM comments WHERE parent_comment_id = ANY($1::int[])`,
+          [parentIds]
+        );
+        const children = res.rows.map((r) => r.id);
+        if (children.length === 0) return parentIds;
+        const deeper = await getAllChildComments(children);
+        return [...parentIds, ...deeper];
+      };
+  
+      // 4️⃣ Gather all descendant comment IDs (including parent)
+      const allIdsToDelete = await getAllChildComments([parseInt(id)]);
+  
+      // 5️⃣ Soft delete all of them
+      await pool.query(
+        `UPDATE comments SET is_deleted = true WHERE id = ANY($1::int[])`,
+        [allIdsToDelete]
+      );
+  
+      // 6️⃣ Update post comment count safely
+      await pool.query(
+        `UPDATE posts 
+         SET comment_count = GREATEST(comment_count - $1, 0)
+         WHERE id = $2`,
+        [allIdsToDelete.length, comment.post_id]
+      );
+  
+      await logCommentActivity({
+        userId: req.user.id,
+        commentId: id,
+        type: 'delete',
+        success: true,
+        req,
+      });
+  
+      res.json({
+        msg: `Deleted ${allIdsToDelete.length} comment(s) (including replies)`,
+      });
+    } catch (err) {
+      console.error('Delete comment error:', err);
+      res
+        .status(500)
+        .json({ error: 'Failed to delete comment', details: err.message });
+    }
+  });
+  
 
 // ================= Like a comment =================
 router.post('/:id/like', verifyToken, async (req, res) => {
