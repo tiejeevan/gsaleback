@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
 const uploadRoute = require("./routes/upload");
+const commentsRoute = require("./routes/comments"); 
 
 dotenv.config();
 const app = express();
@@ -15,6 +16,7 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/posts', require('./routes/posts'));
 app.use("/api/upload", uploadRoute);
 app.use('/api/likes', require('./routes/likes'));
+app.use('/api/comments', commentsRoute);
 
 // Start server
 const PORT = process.env.PORT || 5000;

@@ -105,12 +105,12 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
     }
 });
 
-// ================= Get all posts with likes, attachments, and liked_by_user =================
+// ================= Get all posts with likes, attachments, comments, and liked_by_user =================
 router.get('/', verifyToken, async (req, res) => {
     try {
-      const userId = req.user.id; // from verifyToken middleware
+      const currentUserId = req.user.id;
   
-      // Fetch all posts + user info
+      // 1️⃣ Fetch all posts + user info
       const postsResult = await pool.query(
         `SELECT p.*, u.username, u.first_name, u.last_name
          FROM posts p
@@ -118,50 +118,115 @@ router.get('/', verifyToken, async (req, res) => {
          WHERE p.is_deleted = false
          ORDER BY p.created_at DESC`
       );
+      const posts = postsResult.rows.map(p => ({ ...p, user_id: Number(p.user_id) }));
   
-      // For each post, attach attachments + like data
-      const posts = await Promise.all(
-        postsResult.rows.map(async (post) => {
-          // 1️⃣ Get attachments
-          const attachResult = await pool.query(
-            `SELECT id, file_name, file_url, uploaded_at
-             FROM attachments
-             WHERE post_id = $1`,
-            [post.id]
-          );
+      const postIds = posts.map(p => p.id);
   
-          // 2️⃣ Get like count
-          const likeCountResult = await pool.query(
-            `SELECT COUNT(*) AS like_count
-             FROM likes
-             WHERE target_type = 'post' AND target_id = $1`,
-            [post.id]
-          );
+      // 2️⃣ Fetch all attachments for all posts
+      const attachResult = await pool.query(
+        `SELECT id, post_id, file_name, file_url, uploaded_at
+         FROM attachments
+         WHERE post_id = ANY($1::int[])`,
+        [postIds]
+      );
+      const attachmentsMap = new Map();
+      attachResult.rows.forEach(att => {
+        const pid = att.post_id;
+        if (!attachmentsMap.has(pid)) attachmentsMap.set(pid, []);
+        attachmentsMap.get(pid).push(att);
+      });
   
-          // 3️⃣ Get list of likes (who liked)
-          const likesResult = await pool.query(
-            `SELECT user_id
-             FROM likes
-             WHERE target_type = 'post' AND target_id = $1`,
-            [post.id]
-          );
-  
-          // 4️⃣ Check if current user liked it
-          const userLiked = likesResult.rows.some((like) => like.user_id === userId);
-  
-          // ✅ Add computed fields
-          post.like_count = parseInt(likeCountResult.rows[0].like_count, 10) || 0;
-          post.likes = likesResult.rows; // store user_ids who liked
-          post.attachments = attachResult.rows;
-          post.liked_by_user = userLiked;
-  
-          return post;
-        })
+      // 3️⃣ Fetch likes for posts
+      const likesResult = await pool.query(
+        `SELECT l.id AS like_id, l.user_id, l.reaction_type, l.target_id AS post_id
+         FROM likes l
+         WHERE l.target_type = 'post' AND l.target_id = ANY($1::int[])`,
+        [postIds]
       );
   
-      res.json(posts);
+      const likesMap = new Map();
+      const userLikedSet = new Set();
+      likesResult.rows.forEach(like => {
+        const pid = like.post_id;
+        if (!likesMap.has(pid)) likesMap.set(pid, []);
+        likesMap.get(pid).push({ ...like, user_id: Number(like.user_id) });
+        if (like.user_id === currentUserId) userLikedSet.add(pid);
+      });
+  
+      // 4️⃣ Fetch all comments for all posts
+      const commentsResult = await pool.query(
+        `SELECT c.*, u.username, u.first_name, u.last_name
+         FROM comments c
+         JOIN users u ON c.user_id = u.id
+         WHERE c.post_id = ANY($1::int[]) AND c.is_deleted = false
+         ORDER BY c.path ASC`,
+        [postIds]
+      );
+      const comments = commentsResult.rows.map(c => ({
+        ...c,
+        user_id: Number(c.user_id),
+        post_id: Number(c.post_id),
+        parent_comment_id: c.parent_comment_id ? Number(c.parent_comment_id) : null,
+        children: []
+      }));
+  
+      // 5️⃣ Fetch likes for comments
+      const commentIds = comments.map(c => c.id);
+      const commentLikesResult = await pool.query(
+        `SELECT comment_id, user_id
+         FROM comment_likes
+         WHERE comment_id = ANY($1::int[])`,
+        [commentIds]
+      );
+  
+      const commentLikesMap = new Map();
+      const commentUserLikedSet = new Set();
+      commentLikesResult.rows.forEach(like => {
+        if (!commentLikesMap.has(like.comment_id)) commentLikesMap.set(like.comment_id, 0);
+        commentLikesMap.set(like.comment_id, commentLikesMap.get(like.comment_id) + 1);
+        if (like.user_id === currentUserId) commentUserLikedSet.add(like.comment_id);
+      });
+  
+      comments.forEach(c => {
+        c.like_count = commentLikesMap.get(c.id) || 0;
+        c.liked_by_user = commentUserLikedSet.has(c.id);
+      });
+  
+      // 6️⃣ Build nested comment tree per post
+      const buildCommentsTree = (rows) => {
+        const map = new Map();
+        const roots = [];
+        rows.forEach(r => map.set(r.id, r));
+        rows.forEach(r => {
+          if (!r.parent_comment_id) roots.push(r);
+          else {
+            const parent = map.get(r.parent_comment_id);
+            if (parent) parent.children.push(r);
+            else roots.push(r); // orphaned child
+          }
+        });
+        return roots;
+      };
+  
+      const commentsByPost = new Map();
+      posts.forEach(post => {
+        const postComments = comments.filter(c => c.post_id === post.id);
+        commentsByPost.set(post.id, buildCommentsTree(postComments));
+      });
+  
+      // 7️⃣ Attach attachments, likes, and comments to posts
+      const finalPosts = posts.map(post => ({
+        ...post,
+        attachments: attachmentsMap.get(post.id) || [],
+        likes: likesMap.get(post.id) || [],
+        liked_by_user: userLikedSet.has(post.id),
+        like_count: (likesMap.get(post.id) || []).length,
+        comments: commentsByPost.get(post.id) || []
+      }));
+  
+      res.json(finalPosts);
     } catch (err) {
-      console.error('Error fetching posts with likes:', err);
+      console.error('Error fetching posts with likes and comments:', err);
       res.status(500).json({ error: 'Failed to fetch posts' });
     }
   });
@@ -242,72 +307,133 @@ router.delete('/:id', verifyToken, async (req, res) => {
     }
 });
 
-// ================= Get all posts by a specific user =================
+// ================= Get all posts by a specific user with comments =================
 router.get('/user/:userId', verifyToken, async (req, res) => {
     try {
-        const currentUserId = req.user.id; // logged-in user
-        const targetUserId = req.params.userId; // posts we want
-
-        const postsResult = await pool.query(
-            `SELECT p.*, u.username, u.first_name, u.last_name
-             FROM posts p
-             JOIN users u ON p.user_id = u.id
-             WHERE p.user_id = $1 AND p.is_deleted = false
-             ORDER BY p.created_at DESC`,
-            [targetUserId]
-        );
-
-        const posts = await Promise.all(
-            postsResult.rows.map(async (post) => {
-                // Fetch attachments
-                const attachResult = await pool.query(
-                    `SELECT id, file_name, file_url, uploaded_at
-                     FROM attachments
-                     WHERE post_id = $1`,
-                    [post.id]
-                );
-
-                // Fetch like count
-                const likeCountResult = await pool.query(
-                    `SELECT COUNT(*) AS like_count
-                     FROM likes
-                     WHERE target_type = 'post' AND target_id = $1`,
-                    [post.id]
-                );
-
-                // Fetch detailed likes
-                const likesResult = await pool.query(
-                    `SELECT 
-                        l.id AS like_id,
-                        l.user_id,
-                        l.reaction_type,
-                        l.created_at,
-                        u.username
-                     FROM likes l
-                     JOIN users u ON l.user_id = u.id
-                     WHERE l.target_type = 'post' AND l.target_id = $1
-                     ORDER BY l.created_at DESC`,
-                    [post.id]
-                );
-
-                // Check if current user liked it
-                const userLiked = likesResult.rows.some(like => like.user_id === currentUserId);
-
-                post.like_count = parseInt(likeCountResult.rows[0].like_count, 10) || 0;
-                post.likes = likesResult.rows;
-                post.attachments = attachResult.rows;
-                post.liked_by_user = userLiked;
-
-                return post;
-            })
-        );
-
-        res.json(posts);
+      const currentUserId = req.user.id;
+      const targetUserId = Number(req.params.userId);
+  
+      // 1️⃣ Fetch posts
+      const postsResult = await pool.query(
+        `SELECT p.*, u.username, u.first_name, u.last_name
+         FROM posts p
+         JOIN users u ON p.user_id = u.id
+         WHERE p.user_id = $1 AND p.is_deleted = false
+         ORDER BY p.created_at DESC`,
+        [targetUserId]
+      );
+      const posts = postsResult.rows.map(p => ({ ...p, user_id: Number(p.user_id) }));
+  
+      const postIds = posts.map(p => p.id);
+  
+      // 2️⃣ Fetch attachments
+      const attachResult = await pool.query(
+        `SELECT id, post_id, file_name, file_url, uploaded_at
+         FROM attachments
+         WHERE post_id = ANY($1::int[])`,
+        [postIds]
+      );
+      const attachmentsMap = new Map();
+      attachResult.rows.forEach(att => {
+        const pid = att.post_id;
+        if (!attachmentsMap.has(pid)) attachmentsMap.set(pid, []);
+        attachmentsMap.get(pid).push(att);
+      });
+  
+      // 3️⃣ Fetch likes
+      const likesResult = await pool.query(
+        `SELECT l.id AS like_id, l.user_id, l.reaction_type, l.target_id AS post_id
+         FROM likes l
+         WHERE l.target_type = 'post' AND l.target_id = ANY($1::int[])`,
+        [postIds]
+      );
+  
+      const likesMap = new Map();
+      const userLikedSet = new Set();
+      likesResult.rows.forEach(like => {
+        const pid = like.post_id;
+        if (!likesMap.has(pid)) likesMap.set(pid, []);
+        likesMap.get(pid).push({ ...like, user_id: Number(like.user_id) });
+        if (like.user_id === currentUserId) userLikedSet.add(pid);
+      });
+  
+      // 4️⃣ Fetch all comments
+      const commentsResult = await pool.query(
+        `SELECT c.*, u.username, u.first_name, u.last_name
+         FROM comments c
+         JOIN users u ON c.user_id = u.id
+         WHERE c.post_id = ANY($1::int[]) AND c.is_deleted = false
+         ORDER BY c.path ASC`,
+        [postIds]
+      );
+      const comments = commentsResult.rows.map(c => ({
+        ...c,
+        user_id: Number(c.user_id),
+        post_id: Number(c.post_id),
+        parent_comment_id: c.parent_comment_id ? Number(c.parent_comment_id) : null,
+        children: []
+      }));
+  
+      // 5️⃣ Comment likes
+      const commentIds = comments.map(c => c.id);
+      const commentLikesResult = await pool.query(
+        `SELECT comment_id, user_id
+         FROM comment_likes
+         WHERE comment_id = ANY($1::int[])`,
+        [commentIds]
+      );
+  
+      const commentLikesMap = new Map();
+      const commentUserLikedSet = new Set();
+      commentLikesResult.rows.forEach(like => {
+        if (!commentLikesMap.has(like.comment_id)) commentLikesMap.set(like.comment_id, 0);
+        commentLikesMap.set(like.comment_id, commentLikesMap.get(like.comment_id) + 1);
+        if (like.user_id === currentUserId) commentUserLikedSet.add(like.comment_id);
+      });
+  
+      comments.forEach(c => {
+        c.like_count = commentLikesMap.get(c.id) || 0;
+        c.liked_by_user = commentUserLikedSet.has(c.id);
+      });
+  
+      // 6️⃣ Build nested tree per post
+      const buildCommentsTree = (rows) => {
+        const map = new Map();
+        const roots = [];
+        rows.forEach(r => map.set(r.id, r));
+        rows.forEach(r => {
+          if (!r.parent_comment_id) roots.push(r);
+          else {
+            const parent = map.get(r.parent_comment_id);
+            if (parent) parent.children.push(r);
+            else roots.push(r);
+          }
+        });
+        return roots;
+      };
+  
+      const commentsByPost = new Map();
+      posts.forEach(post => {
+        const postComments = comments.filter(c => c.post_id === post.id);
+        commentsByPost.set(post.id, buildCommentsTree(postComments));
+      });
+  
+      // 7️⃣ Attach attachments, likes, and comments
+      const finalPosts = posts.map(post => ({
+        ...post,
+        attachments: attachmentsMap.get(post.id) || [],
+        likes: likesMap.get(post.id) || [],
+        liked_by_user: userLikedSet.has(post.id),
+        like_count: (likesMap.get(post.id) || []).length,
+        comments: commentsByPost.get(post.id) || []
+      }));
+  
+      res.json(finalPosts);
     } catch (err) {
-        console.error('Error fetching user posts with like details:', err);
-        res.status(500).json({ error: 'Failed to fetch user posts with like details' });
+      console.error('Error fetching user posts with likes and comments:', err);
+      res.status(500).json({ error: 'Failed to fetch user posts with likes and comments' });
     }
-});
+  });
 
 
 
