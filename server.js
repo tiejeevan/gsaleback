@@ -1,8 +1,11 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const http = require('http');
+const { Server } = require('socket.io');
+
 const uploadRoute = require("./routes/upload");
-const commentsRoute = require("./routes/comments"); 
+const commentsRoute = require("./routes/comments");
 
 dotenv.config();
 const app = express();
@@ -18,6 +21,17 @@ app.use("/api/upload", uploadRoute);
 app.use('/api/likes', require('./routes/likes'));
 app.use('/api/comments', commentsRoute);
 
+// Wrap express app in http server
+const server = http.createServer(app);
+
+// Setup Socket.IO
+const io = new Server(server, {
+  cors: { origin: '*' } // change to your frontend origin
+});
+
+// Make io accessible in routes
+app.set('io', io);
+
 // Start server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));

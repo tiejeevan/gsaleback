@@ -63,7 +63,6 @@ const buildCommentsTree = (rows) => {
 };
 
 // ================= Create a new comment =================
-// Accepts: post_id (required), parent_comment_id (optional), content (required unless files), files[] (optional)
 router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
   const { post_id, parent_comment_id, content } = req.body;
 
@@ -72,11 +71,16 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
   }
 
   try {
-    // Validate post exists and not deleted
-    const postRes = await pool.query(`SELECT id FROM posts WHERE id = $1 AND is_deleted = false`, [post_id]);
+    // Validate post exists
+    const postRes = await pool.query(
+      `SELECT id, user_id FROM posts WHERE id = $1 AND is_deleted = false`,
+      [post_id]
+    );
     if (postRes.rows.length === 0) return res.status(404).json({ error: 'Post not found' });
 
-    // Determine parent path (if reply)
+    const postOwnerId = postRes.rows[0].user_id;
+
+    // Determine parent path if it's a reply
     let parentPath = null;
     if (parent_comment_id) {
       const parentRes = await pool.query(`SELECT path, is_deleted FROM comments WHERE id = $1`, [parent_comment_id]);
@@ -85,20 +89,18 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
       parentPath = parentRes.rows[0].path;
     }
 
-    // Handle attachments: small helper — either upload to R2/S3 here or store metadata (we store metadata URL placeholders)
+    // Handle attachments
     let attachments = null;
     if (req.files && req.files.length > 0) {
       attachments = req.files.map(file => ({
         file_name: file.originalname,
-        // NOTE: If you want to upload to R2/S3, do it here and set 'url' to the real URL.
-        // For now we put a placeholder path; replace with your S3/R2 logic if desired.
         url: `uploads/${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`,
         mime_type: file.mimetype,
         size: file.size
       }));
     }
 
-    // Insert comment (path will be updated after we know the id)
+    // Insert comment
     const insertRes = await pool.query(
       `INSERT INTO comments (post_id, user_id, parent_comment_id, content, attachments, is_deleted, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
@@ -109,17 +111,43 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
     if (!insertRes.rows.length) throw new Error('Failed to create comment');
     const comment = insertRes.rows[0];
 
-    // Build new path (if parent exists, parent.path + '/' + id, else id)
+    // Build path
     const newPath = parentPath ? `${parentPath}/${comment.id}` : `${comment.id}`;
     await pool.query(`UPDATE comments SET path = $1 WHERE id = $2`, [newPath, comment.id]);
     comment.path = newPath;
 
-    // Optionally increment post comment_count
+    // Increment post comment count
     await pool.query(`UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1`, [post_id]);
 
     await logCommentActivity({ userId: req.user.id, commentId: comment.id, type: 'create', success: true, req });
 
+    // =================== REAL-TIME EMIT ===================
+    const io = req.app.get('io');
+    if (io) {
+      // Emit comment to all clients subscribed to this post
+      io.emit(`post_${comment.post_id}:comment:new`, comment);
+
+      // Notify post owner if commenter is not owner
+      if (postOwnerId !== comment.user_id) {
+        const notifRes = await pool.query(
+          `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
+           VALUES ($1,$2,'comment',$3) RETURNING *`,
+          [
+            postOwnerId,
+            comment.user_id,
+            JSON.stringify({
+              postId: comment.post_id,
+              commentId: comment.id,
+              text: comment.content?.slice(0, 50)
+            })
+          ]
+        );
+        io.to(`user_${postOwnerId}`).emit('notification:new', notifRes.rows[0]);
+      }
+    }
+
     res.status(201).json(comment);
+
   } catch (err) {
     console.error('Create comment error:', err);
     res.status(500).json({ error: 'Failed to create comment', details: err.message });
