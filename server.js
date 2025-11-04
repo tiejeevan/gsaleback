@@ -20,6 +20,7 @@ app.use('/api/posts', require('./routes/posts'));
 app.use("/api/upload", uploadRoute);
 app.use('/api/likes', require('./routes/likes'));
 app.use('/api/comments', commentsRoute);
+app.use("/api/notifications", require("./routes/notifications"));
 
 // Wrap express app in http server
 const server = http.createServer(app);

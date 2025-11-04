@@ -124,14 +124,14 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
     // =================== REAL-TIME EMIT ===================
     const io = req.app.get('io');
     if (io) {
-      // Emit comment to all clients subscribed to this post
+      // 1️⃣ Emit comment to all clients subscribed to this post
       io.emit(`post_${comment.post_id}:comment:new`, comment);
 
-      // Notify post owner if commenter is not owner
+      // 2️⃣ Notify post owner if commenter is not the owner
       if (postOwnerId !== comment.user_id) {
         const notifRes = await pool.query(
           `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
-           VALUES ($1,$2,'comment',$3) RETURNING *`,
+       VALUES ($1, $2, 'comment', $3) RETURNING *`,
           [
             postOwnerId,
             comment.user_id,
@@ -142,7 +142,10 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
             })
           ]
         );
-        io.to(`user_${postOwnerId}`).emit('notification:new', notifRes.rows[0]);
+
+        // Convert postOwnerId to string to match frontend socket room
+        const roomName = `user_${postOwnerId.toString()}`;
+        io.to(roomName).emit('notification:new', notifRes.rows[0]);
       }
     }
 
