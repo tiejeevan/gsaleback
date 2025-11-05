@@ -16,6 +16,16 @@ exports.addLike = async (req, res) => {
       [userId, target_type, target_id, reaction_type]
     );
 
+    const io = req.app.get('io');
+    if (io) {
+      io.emit(`post_${target_id}:like:new`, {
+        target_type,
+        target_id,
+        user_id: userId,
+        reaction_type,
+      });
+    }
+
     res.status(201).json({ success: true, like: result.rows[0] });
   } catch (err) {
     console.error('Error adding like:', err);
@@ -33,6 +43,16 @@ exports.removeLike = async (req, res) => {
       'DELETE FROM likes WHERE user_id = $1 AND target_type = $2 AND target_id = $3',
       [userId, target_type, target_id]
     );
+    // 2️⃣ Emit socket event for real-time update
+    const io = req.app.get('io');
+    if (io) {
+      io.emit(`post_${target_id}:like:new`, {
+        target_type,
+        target_id,
+        user_id: userId,
+        reaction_type: 'unlike', // mark it as unlike
+      });
+    }
     res.json({ success: true, message: 'Like removed' });
   } catch (err) {
     console.error('Error removing like:', err);
