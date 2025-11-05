@@ -18,7 +18,14 @@ exports.addLike = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
-      io.to(`post_${target_id}`).emit(`post_${target_id}:like:new`, {
+      console.log("📡 [Socket Emit → Room] Emitting like event to room:", {
+        room: `post_${target_id}`,
+        target_type,
+        target_id,
+        user_id: userId,
+        reaction_type,
+      });
+      io.emit(`post_${target_id}:like:new`, {
         target_type,
         target_id,
         user_id: userId,
@@ -46,7 +53,10 @@ exports.removeLike = async (req, res) => {
     // 2️⃣ Emit socket event for real-time update
     const io = req.app.get('io');
     if (io) {
-      io.to(`post_${target_id}`).emit(`post_${target_id}:like:new`, {
+      console.log(
+        `[Socket Emit] Emitting unlike event → post_${target_id}:like:new | target_type: ${target_type}, target_id: ${target_id}, user_id: ${userId}, reaction_type: unlike`
+      );
+      io.emit(`post_${target_id}:like:new`, {
         target_type,
         target_id,
         user_id: userId,
