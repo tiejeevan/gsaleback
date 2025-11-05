@@ -18,7 +18,7 @@ exports.addLike = async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
-      io.emit(`post_${target_id}:like:new`, {
+      io.to(`post_${target_id}`).emit(`post_${target_id}:like:new`, {
         target_type,
         target_id,
         user_id: userId,
@@ -46,7 +46,7 @@ exports.removeLike = async (req, res) => {
     // 2️⃣ Emit socket event for real-time update
     const io = req.app.get('io');
     if (io) {
-      io.emit(`post_${target_id}:like:new`, {
+      io.to(`post_${target_id}`).emit(`post_${target_id}:like:new`, {
         target_type,
         target_id,
         user_id: userId,
