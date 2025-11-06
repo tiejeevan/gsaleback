@@ -33,30 +33,20 @@ const io = new Server(server, {
 
 // Socket.IO connection handlers
 io.on('connection', (socket) => {
-  console.log('🔌 [Socket.IO] User connected:', socket.id);
-
   // Handle room joining
   socket.on('join', (room) => {
     socket.join(room);
-    console.log(`👥 [Socket.IO] User ${socket.id} joined room: ${room}`);
     socket.emit('joined', room);
   });
 
   // Handle leaving rooms
   socket.on('leave', (room) => {
     socket.leave(room);
-    console.log(`👋 [Socket.IO] User ${socket.id} left room: ${room}`);
     socket.emit('left', room);
-  });
-
-  // Handle disconnection
-  socket.on('disconnect', () => {
-    console.log('🔌 [Socket.IO] User disconnected:', socket.id);
   });
 
   // Test handler for backend connectivity
   socket.on('test', (data) => {
-    console.log('🧪 [Socket.IO] Test received:', data);
     socket.emit('test-response', { message: 'Backend received test', timestamp: new Date().toISOString() });
   });
 });
