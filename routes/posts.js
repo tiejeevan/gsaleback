@@ -231,34 +231,108 @@ router.get('/', verifyToken, async (req, res) => {
     }
   });
   
+// ================= Build nested comment tree =================
+const buildCommentTree = (comments) => {
+  const map = {};
+  const roots = [];
+
+  comments.forEach(c => map[c.id] = { ...c, replies: [] });
+
+  comments.forEach(c => {
+    if (c.parent_id) {
+      if (map[c.parent_id]) map[c.parent_id].replies.push(map[c.id]);
+    } else {
+      roots.push(map[c.id]);
+    }
+  });
+
+  return roots;
+};
 
 // ================= Get a single post by ID =================
 router.get('/:id', verifyToken, async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT p.*, u.username, u.first_name, u.last_name
-             FROM posts p
-             JOIN users u ON p.user_id = u.id
-             WHERE p.id = $1 AND p.is_deleted = false`,
-            [req.params.id]
-        );
-        if (result.rows.length === 0) return res.status(404).json({ error: 'Post not found' });
+  try {
+    const postId = req.params.id;
 
-        const attachResult = await pool.query(
-            `SELECT id, file_name, file_url, uploaded_at
-             FROM attachments
-             WHERE post_id = $1`,
-            [req.params.id]
-        );
+    // 1️⃣ Fetch the post
+    const postResult = await pool.query(
+      `SELECT p.*, u.username, u.first_name, u.last_name
+       FROM posts p
+       JOIN users u ON p.user_id = u.id
+       WHERE p.id = $1 AND p.is_deleted = false`,
+      [postId]
+    );
 
-        const post = result.rows[0];
-        post.attachments = attachResult.rows;
-
-        res.json(post);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Failed to fetch post' });
+    if (postResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Post not found' });
     }
+
+    const post = postResult.rows[0];
+
+    // 2️⃣ Fetch attachments
+    const attachResult = await pool.query(
+      `SELECT id, file_name, file_url, uploaded_at
+       FROM attachments
+       WHERE post_id = $1`,
+      [postId]
+    );
+
+    post.attachments = attachResult.rows;
+
+    // 3️⃣ Fetch comments
+    const commentsResult = await pool.query(
+      `SELECT c.*, u.username, u.first_name, u.last_name
+       FROM comments c
+       JOIN users u ON c.user_id = u.id
+       WHERE c.post_id = $1 AND c.is_deleted = false
+       ORDER BY c.created_at ASC`,
+      [postId]
+    );
+
+    // Build nested comments tree
+    post.comments = buildCommentTree(commentsResult.rows);
+
+    // 4️⃣ Fetch likes for the post
+    const likesResult = await pool.query(
+      `SELECT user_id, reaction_type
+       FROM likes
+       WHERE target_type = 'post' AND target_id = $1`,
+      [postId]
+    );
+
+    post.likes = likesResult.rows;
+
+    // 5️⃣ Optionally, fetch likes for each comment
+    const commentIds = commentsResult.rows.map(c => c.id);
+    if (commentIds.length > 0) {
+      const commentLikesResult = await pool.query(
+        `SELECT target_id AS comment_id, user_id, reaction_type
+         FROM likes
+         WHERE target_type = 'comment' AND target_id = ANY($1::int[])`,
+        [commentIds]
+      );
+
+      const commentLikesMap = {};
+      commentLikesResult.rows.forEach(like => {
+        if (!commentLikesMap[like.comment_id]) commentLikesMap[like.comment_id] = [];
+        commentLikesMap[like.comment_id].push({ user_id: like.user_id, reaction_type: like.reaction_type });
+      });
+
+      // Attach likes to comments in the tree
+      const attachLikesToComments = (commentsArray) => {
+        commentsArray.forEach(c => {
+          c.likes = commentLikesMap[c.id] || [];
+          if (c.replies.length > 0) attachLikesToComments(c.replies);
+        });
+      };
+      attachLikesToComments(post.comments);
+    }
+
+    res.json(post);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to fetch post' });
+  }
 });
 
 // ================= Update a post =================
