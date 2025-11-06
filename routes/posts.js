@@ -115,7 +115,7 @@ router.get('/', verifyToken, async (req, res) => {
         `SELECT p.*, u.username, u.first_name, u.last_name
          FROM posts p
          JOIN users u ON p.user_id = u.id
-         WHERE p.is_deleted = false
+         WHERE p.is_deleted = false AND p.visibility = 'public'
          ORDER BY p.created_at DESC`
       );
       const posts = postsResult.rows.map(p => ({ ...p, user_id: Number(p.user_id) }));
