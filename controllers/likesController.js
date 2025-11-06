@@ -6,8 +6,6 @@ exports.addLike = async (req, res) => {
   const { target_type, target_id, reaction_type = 'like' } = req.body;
   const userId = req.user.id; // assuming you use auth middleware
 
-  console.log(`👍 ADD LIKE: User ${userId} -> ${target_type} ${target_id} (${reaction_type})`);
-
   try {
     // Check if this is a new like (not an update)
     const existingLike = await pool.query(
@@ -28,8 +26,6 @@ exports.addLike = async (req, res) => {
 
     // Only create notification for new likes on posts
     if (isNewLike && target_type === 'post') {
-      console.log(`📝 Processing notification for new like: User ${userId} liked post ${target_id}`);
-      
       // Get the post owner to send notification
       const postOwner = await pool.query(
         'SELECT user_id FROM posts WHERE id = $1',
@@ -38,12 +34,9 @@ exports.addLike = async (req, res) => {
 
       if (postOwner.rows.length > 0) {
         const recipientUserId = postOwner.rows[0].user_id;
-        console.log(`👤 Post owner found: User ${recipientUserId}`);
         
         // Don't send notification if user likes their own post
         if (recipientUserId !== userId) {
-          console.log(`✅ Different users - checking for existing notification...`);
-          
           // Check if notification already exists for this post and user combination
           const existingNotification = await pool.query(
             `SELECT id FROM notifications 
@@ -54,8 +47,6 @@ exports.addLike = async (req, res) => {
 
           // Only create notification if it doesn't exist
           if (existingNotification.rows.length === 0) {
-            console.log(`🔔 Creating new like notification for user ${recipientUserId}`);
-            
             const notificationResult = await pool.query(
               `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
                VALUES ($1, $2, $3, $4)
@@ -72,29 +63,14 @@ exports.addLike = async (req, res) => {
               ]
             );
 
-            console.log(`✅ Notification created with ID: ${notificationResult.rows[0].id}`);
-
             // Send real-time notification
             const io = req.app.get('io');
             if (io) {
-              console.log(`📡 Sending real-time notification to user_${recipientUserId}`);
               io.to(`user_${recipientUserId}`).emit('notification:new', notificationResult.rows[0]);
-            } else {
-              console.log(`⚠️  Socket.IO not available - notification stored but not sent real-time`);
             }
-          } else {
-            console.log(`⏭️  Notification already exists - skipping duplicate (ID: ${existingNotification.rows[0].id})`);
           }
-        } else {
-          console.log(`🚫 User liked their own post - no notification sent`);
         }
-      } else {
-        console.log(`❌ Post ${target_id} not found - no notification sent`);
       }
-    } else if (!isNewLike) {
-      console.log(`⏭️  Like update (not new) - no notification sent`);
-    } else {
-      console.log(`⏭️  Not a post like (${target_type}) - no notification sent`);
     }
 
     // Emit like event for real-time like updates
@@ -120,50 +96,14 @@ exports.removeLike = async (req, res) => {
   const { target_type, target_id } = req.body;
   const userId = req.user.id;
 
-  console.log(`👎 REMOVE LIKE: User ${userId} -> ${target_type} ${target_id}`);
-
   try {
     const deleteResult = await pool.query(
       'DELETE FROM likes WHERE user_id = $1 AND target_type = $2 AND target_id = $3 RETURNING *',
       [userId, target_type, target_id]
     );
 
-    // If like was successfully removed and it was for a post, remove the notification
-    if (deleteResult.rows.length > 0 && target_type === 'post') {
-      console.log(`🗑️  Processing notification cleanup for unlike: User ${userId} unliked post ${target_id}`);
-      
-      // Get the post owner
-      const postOwner = await pool.query(
-        'SELECT user_id FROM posts WHERE id = $1',
-        [target_id]
-      );
-
-      if (postOwner.rows.length > 0) {
-        const recipientUserId = postOwner.rows[0].user_id;
-        console.log(`👤 Post owner: User ${recipientUserId} - removing notification...`);
-        
-        // Remove the like notification if it exists
-        const deleteNotificationResult = await pool.query(
-          `DELETE FROM notifications 
-           WHERE recipient_user_id = $1 AND actor_user_id = $2 AND type = 'like' 
-           AND payload->>'target_id' = $3
-           RETURNING id`,
-          [recipientUserId, userId, target_id.toString()]
-        );
-
-        if (deleteNotificationResult.rows.length > 0) {
-          console.log(`✅ Notification removed (ID: ${deleteNotificationResult.rows[0].id})`);
-        } else {
-          console.log(`⚠️  No notification found to remove`);
-        }
-      } else {
-        console.log(`❌ Post ${target_id} not found during unlike`);
-      }
-    } else if (deleteResult.rows.length === 0) {
-      console.log(`⚠️  No like found to remove`);
-    } else {
-      console.log(`⏭️  Unlike for non-post (${target_type}) - no notification cleanup needed`);
-    }
+    // Note: We don't remove notifications when someone unlikes
+    // This ensures only ONE notification per user per post (ever)
 
     // Emit socket event for real-time update
     const io = req.app.get('io');
