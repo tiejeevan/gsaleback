@@ -336,8 +336,12 @@ router.post('/:id/like', verifyToken, async (req, res) => {
   const { id } = req.params;
   try {
     // ensure comment exists and not deleted
-    const commentRes = await pool.query(`SELECT id FROM comments WHERE id = $1 AND is_deleted = false`, [id]);
+    const commentRes = await pool.query(
+      `SELECT id, post_id FROM comments WHERE id = $1 AND is_deleted = false`,
+      [id]
+    );
     if (!commentRes.rows.length) return res.status(404).json({ error: 'Comment not found' });
+    const { post_id } = commentRes.rows[0];
 
     // prevent duplicate
     const existsRes = await pool.query(
@@ -346,9 +350,30 @@ router.post('/:id/like', verifyToken, async (req, res) => {
     );
     if (existsRes.rows.length > 0) return res.status(400).json({ error: 'Already liked' });
 
-    await pool.query(`INSERT INTO comment_likes (comment_id, user_id, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP)`, [id, req.user.id]);
+    await pool.query(
+      `INSERT INTO comment_likes (comment_id, user_id, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP)`,
+      [id, req.user.id]
+    );
 
     await logCommentActivity({ userId: req.user.id, commentId: id, type: 'like', success: true, req });
+
+    // Real-time emit
+    const io = req.app.get('io');
+    if (io) {
+      const channel = `post_${post_id}:comment:like:new`;
+      console.log('📡 [Socket Emit] Comment like →', channel, {
+        post_id,
+        comment_id: Number(id),
+        user_id: req.user.id,
+        reaction_type: 'like',
+      });
+      io.emit(channel, {
+        post_id,
+        comment_id: Number(id),
+        user_id: req.user.id,
+        reaction_type: 'like',
+      });
+    }
 
     res.json({ msg: 'Comment liked' });
   } catch (err) {
@@ -361,9 +386,37 @@ router.post('/:id/like', verifyToken, async (req, res) => {
 router.post('/:id/unlike', verifyToken, async (req, res) => {
   const { id } = req.params;
   try {
-    await pool.query(`DELETE FROM comment_likes WHERE comment_id = $1 AND user_id = $2`, [id, req.user.id]);
+    // fetch comment to get post id for channel emit
+    const commentRes = await pool.query(
+      `SELECT id, post_id FROM comments WHERE id = $1`,
+      [id]
+    );
+    const post_id = commentRes.rows?.[0]?.post_id || null;
+
+    await pool.query(
+      `DELETE FROM comment_likes WHERE comment_id = $1 AND user_id = $2`,
+      [id, req.user.id]
+    );
 
     await logCommentActivity({ userId: req.user.id, commentId: id, type: 'unlike', success: true, req });
+
+    // Real-time emit
+    const io = req.app.get('io');
+    if (io && post_id) {
+      const channel = `post_${post_id}:comment:like:new`;
+      console.log('📡 [Socket Emit] Comment unlike →', channel, {
+        post_id,
+        comment_id: Number(id),
+        user_id: req.user.id,
+        reaction_type: 'unlike',
+      });
+      io.emit(channel, {
+        post_id,
+        comment_id: Number(id),
+        user_id: req.user.id,
+        reaction_type: 'unlike',
+      });
+    }
 
     res.json({ msg: 'Comment unliked' });
   } catch (err) {
