@@ -125,10 +125,22 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
     const io = req.app.get('io');
     if (io) {
       // 1️⃣ Emit comment to all clients subscribed to this post
+      console.log("📡 [Socket Emit] New comment →", `post_${comment.post_id}:comment:new`, {
+        post_id: comment.post_id,
+        comment_id: comment.id,
+        user_id: comment.user_id
+      });
       io.emit(`post_${comment.post_id}:comment:new`, comment);
 
       // 2️⃣ Notify post owner if commenter is not the owner
       if (postOwnerId !== comment.user_id) {
+        console.log("📬 [Notification] Creating comment notification for post owner:", {
+          postOwnerId,
+          commenterId: comment.user_id,
+          postId: comment.post_id,
+          commentId: comment.id
+        });
+
         const notifRes = await pool.query(
           `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
        VALUES ($1, $2, 'comment', $3) RETURNING *`,
@@ -145,7 +157,18 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
 
         // Convert postOwnerId to string to match frontend socket room
         const roomName = `user_${postOwnerId.toString()}`;
+        console.log("📡 [Socket Emit] Comment notification →", roomName, "notification:new", {
+          notificationId: notifRes.rows[0].id,
+          recipient: postOwnerId,
+          actor: comment.user_id,
+          type: 'comment'
+        });
         io.to(roomName).emit('notification:new', notifRes.rows[0]);
+      } else {
+        console.log("🚫 [Notification] Skipping notification - user commented on their own post:", {
+          userId: comment.user_id,
+          postId: comment.post_id
+        });
       }
     }
 
