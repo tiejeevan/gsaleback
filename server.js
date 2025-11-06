@@ -21,6 +21,7 @@ app.use("/api/upload", uploadRoute);
 app.use('/api/likes', require('./routes/likes'));
 app.use('/api/comments', commentsRoute);
 app.use("/api/notifications", require("./routes/notifications"));
+app.use("/api/users", require("./routes/users"));
 
 // Wrap express app in http server
 const server = http.createServer(app);
