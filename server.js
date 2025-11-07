@@ -22,6 +22,7 @@ app.use('/api/likes', require('./routes/likes'));
 app.use('/api/comments', commentsRoute);
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/users", require("./routes/users"));
+app.use('/api/chats', require('./routes/chats'));
 
 // Wrap express app in http server
 const server = http.createServer(app);
@@ -33,6 +34,8 @@ const io = new Server(server, {
 
 // Socket.IO connection handlers
 io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+
   // Handle room joining
   socket.on('join', (room) => {
     socket.join(room);
@@ -43,6 +46,30 @@ io.on('connection', (socket) => {
   socket.on('leave', (room) => {
     socket.leave(room);
     socket.emit('left', room);
+  });
+
+  // Chat-specific handlers
+  socket.on('join_chat', ({ chatId, userId }) => {
+    socket.join(`chat_${chatId}`);
+    socket.join(`user_${userId}`);
+    console.log(`User ${userId} joined chat ${chatId}`);
+  });
+
+  socket.on('leave_chat', ({ chatId }) => {
+    socket.leave(`chat_${chatId}`);
+    console.log(`User left chat ${chatId}`);
+  });
+
+  socket.on('typing', ({ chatId, userId }) => {
+    socket.to(`chat_${chatId}`).emit('user:typing', { userId });
+  });
+
+  socket.on('stop_typing', ({ chatId, userId }) => {
+    socket.to(`chat_${chatId}`).emit('user:stop_typing', { userId });
+  });
+
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
   });
 
   // Test handler for backend connectivity
