@@ -240,36 +240,64 @@ class PostsService {
 
   // Update post
   async updatePost(postId, userId, updates) {
-    const { content, title, visibility, postType, tags, mentions, location, commentsEnabled, metadata } = updates;
+    const { content, title, visibility, postType, tags, mentions, location, commentsEnabled, comments_enabled, metadata } = updates;
+    const commentsEnabledValue = commentsEnabled !== undefined ? commentsEnabled : comments_enabled;
     
+    // Build dynamic SET clause to handle boolean values properly
+    const setClauses = [];
+    const values = [];
+    let paramCount = 1;
+
+    if (content !== undefined) {
+      setClauses.push(`content = $${paramCount++}`);
+      values.push(content);
+    }
+    if (title !== undefined) {
+      setClauses.push(`title = $${paramCount++}`);
+      values.push(title);
+    }
+    if (visibility !== undefined) {
+      setClauses.push(`visibility = $${paramCount++}`);
+      values.push(visibility);
+    }
+    if (postType !== undefined) {
+      setClauses.push(`post_type = $${paramCount++}`);
+      values.push(postType);
+    }
+    if (tags !== undefined) {
+      setClauses.push(`tags = $${paramCount++}`);
+      values.push(JSON.stringify(tags));
+    }
+    if (mentions !== undefined) {
+      setClauses.push(`mentions = $${paramCount++}`);
+      values.push(JSON.stringify(mentions));
+    }
+    if (location !== undefined) {
+      setClauses.push(`location = $${paramCount++}`);
+      values.push(location);
+    }
+    if (commentsEnabledValue !== undefined) {
+      setClauses.push(`comments_enabled = $${paramCount++}`);
+      values.push(commentsEnabledValue);
+    }
+    if (metadata !== undefined) {
+      setClauses.push(`metadata = $${paramCount++}`);
+      values.push(JSON.stringify(metadata));
+    }
+
+    // Always update these
+    setClauses.push('is_edited = true');
+    setClauses.push('updated_at = CURRENT_TIMESTAMP');
+
+    // Add WHERE clause parameters
+    values.push(postId, userId);
+
     const result = await pool.query(
       `UPDATE posts
-       SET content = COALESCE($1, content),
-           title = COALESCE($2, title),
-           visibility = COALESCE($3, visibility),
-           post_type = COALESCE($4, post_type),
-           tags = COALESCE($5, tags),
-           mentions = COALESCE($6, mentions),
-           location = COALESCE($7, location),
-           comments_enabled = COALESCE($8, comments_enabled),
-           metadata = COALESCE($9, metadata),
-           is_edited = true,
-           updated_at = CURRENT_TIMESTAMP
-       WHERE id = $10 AND user_id = $11
+       SET ${setClauses.join(', ')}
+       WHERE id = $${paramCount++} AND user_id = $${paramCount++}
        RETURNING *`,
-      [
-        content,
-        title,
-        visibility,
-        postType,
-        tags ? JSON.stringify(tags) : null,
-        mentions ? JSON.stringify(mentions) : null,
-        location,
-        commentsEnabled,
-        metadata ? JSON.stringify(metadata) : null,
-        postId,
-        userId
-      ]
+      values
     );
 
     return result.rows[0] || null;
