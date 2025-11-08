@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
 const multer = require('multer');
+const mentionsService = require('../services/mentionsService');
 require('dotenv').config({ path: '.env' });
 
 // ================= Middleware: Verify Token =================
@@ -89,6 +90,9 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
       parentPath = parentRes.rows[0].path;
     }
 
+    // Process mentions in content
+    const { mentionedUsers, mentionIds } = await mentionsService.processMentions(content);
+
     // Handle attachments
     let attachments = null;
     if (req.files && req.files.length > 0) {
@@ -100,12 +104,12 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
       }));
     }
 
-    // Insert comment
+    // Insert comment with mentions
     const insertRes = await pool.query(
-      `INSERT INTO comments (post_id, user_id, parent_comment_id, content, attachments, is_deleted, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+      `INSERT INTO comments (post_id, user_id, parent_comment_id, content, attachments, mentions, is_deleted, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, false, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
        RETURNING *`,
-      [post_id, req.user.id, parent_comment_id || null, content || null, attachments]
+      [post_id, req.user.id, parent_comment_id || null, content || null, attachments, JSON.stringify(mentionIds)]
     );
 
     if (!insertRes.rows.length) throw new Error('Failed to create comment');
@@ -115,6 +119,9 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
     const newPath = parentPath ? `${parentPath}/${comment.id}` : `${comment.id}`;
     await pool.query(`UPDATE comments SET path = $1 WHERE id = $2`, [newPath, comment.id]);
     comment.path = newPath;
+
+    // Create mention records
+    await mentionsService.createCommentMentions(comment.id, req.user.id, mentionIds);
 
     // Increment post comment count
     await pool.query(`UPDATE posts SET comment_count = comment_count + 1 WHERE id = $1`, [post_id]);
@@ -146,6 +153,16 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
         const roomName = `user_${postOwnerId.toString()}`;
         io.to(roomName).emit('notification:new', notifRes.rows[0]);
       }
+
+      // 3️⃣ Notify mentioned users
+      await mentionsService.notifyMentionedUsers({
+        commentId: comment.id,
+        postId: post_id,
+        mentionerUserId: req.user.id,
+        mentionedUserIds: mentionIds,
+        commentText: content,
+        io
+      });
     }
 
     res.status(201).json(comment);

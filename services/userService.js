@@ -44,3 +44,25 @@ exports.update = async (id, data) => {
 
   return rows[0];
 };
+
+// 🟢 Search users for mentions (autocomplete)
+exports.searchForMentions = async (query, currentUserId, limit = 10) => {
+  const { rows } = await pool.query(
+    `SELECT id, username, display_name, profile_image, first_name, last_name
+     FROM users
+     WHERE (username ILIKE $1 OR display_name ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
+       AND is_active = true 
+       AND deleted_at IS NULL
+       AND id != $2
+     ORDER BY 
+       CASE 
+         WHEN username ILIKE $1 THEN 1
+         WHEN display_name ILIKE $1 THEN 2
+         ELSE 3
+       END,
+       follower_count DESC NULLS LAST
+     LIMIT $3`,
+    [`${query}%`, currentUserId, limit]
+  );
+  return rows;
+};

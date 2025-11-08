@@ -2,8 +2,9 @@ const express = require("express");
 const router = express.Router();
 const pool = require("../db");
 const verifyToken = require('../middleware/authMiddleware');
+const mentionsService = require('../services/mentionsService');
 // ========================
-// 1️⃣ Get user notifications
+// 1️⃣ Get user notifications (exclude soft deleted)
 // ========================
 router.get("/", verifyToken, async (req, res) => {
   try {
@@ -12,7 +13,7 @@ router.get("/", verifyToken, async (req, res) => {
       `SELECT n.*, u.username AS actor_name
        FROM notifications n
        LEFT JOIN users u ON n.actor_user_id = u.id
-       WHERE n.recipient_user_id = $1
+       WHERE n.recipient_user_id = $1 AND n.deleted_at IS NULL
        ORDER BY n.created_at DESC`,
       [userId]
     );
@@ -24,17 +25,53 @@ router.get("/", verifyToken, async (req, res) => {
 });
 
 // ========================
-// 2️⃣ Mark one as read
+// 2️⃣ Mark one as read (soft delete if mention)
 // ========================
 router.put("/:id/read", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const { id } = req.params;
+    
+    // Get notification details
+    const notifResult = await pool.query(
+      `SELECT * FROM notifications WHERE id = $1 AND recipient_user_id = $2`,
+      [id, userId]
+    );
+    
+    if (notifResult.rows.length === 0) {
+      return res.status(404).json({ error: "Notification not found" });
+    }
+    
+    const notification = notifResult.rows[0];
+    
+    // Mark as read
     await pool.query(
       `UPDATE notifications SET is_read = true 
        WHERE id = $1 AND recipient_user_id = $2`,
       [id, userId]
     );
+    
+    // If it's a mention notification, soft delete it and the mention record
+    if (notification.type === 'mention') {
+      await pool.query(
+        `UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP 
+         WHERE id = $1`,
+        [id]
+      );
+      
+      // Also soft delete the mention record
+      const commentId = notification.payload?.commentId;
+      if (commentId) {
+        await mentionsService.softDeleteMention(commentId, userId);
+      }
+      
+      // Emit real-time event to remove notification from UI
+      const io = req.app.get("io");
+      if (io) {
+        io.to(`user_${userId}`).emit("notification:deleted", { notificationId: parseInt(id) });
+      }
+    }
+    
     res.json({ success: true });
   } catch (err) {
     console.error("Error marking notification as read:", err);
@@ -92,16 +129,46 @@ router.post("/", verifyToken, async (req, res) => {
 });
 
 // ========================
-// 5️⃣ Delete (optional)
+// 5️⃣ Soft delete notification
 // ========================
 router.delete("/:id", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const { id } = req.params;
-    await pool.query(
-      `DELETE FROM notifications WHERE id = $1 AND recipient_user_id = $2`,
+    
+    // Get notification details
+    const notifResult = await pool.query(
+      `SELECT * FROM notifications WHERE id = $1 AND recipient_user_id = $2`,
       [id, userId]
     );
+    
+    if (notifResult.rows.length === 0) {
+      return res.status(404).json({ error: "Notification not found" });
+    }
+    
+    const notification = notifResult.rows[0];
+    
+    // Soft delete the notification
+    await pool.query(
+      `UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP 
+       WHERE id = $1 AND recipient_user_id = $2`,
+      [id, userId]
+    );
+    
+    // If it's a mention, also soft delete the mention record
+    if (notification.type === 'mention') {
+      const commentId = notification.payload?.commentId;
+      if (commentId) {
+        await mentionsService.softDeleteMention(commentId, userId);
+      }
+    }
+    
+    // Emit real-time event to remove notification from UI
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`user_${userId}`).emit("notification:deleted", { notificationId: parseInt(id) });
+    }
+    
     res.json({ success: true });
   } catch (err) {
     console.error("Error deleting notification:", err);
