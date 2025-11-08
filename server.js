@@ -23,6 +23,7 @@ app.use('/api/comments', commentsRoute);
 app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/users", require("./routes/users"));
 app.use('/api/chats', require('./routes/chats'));
+app.use('/api/follows', require('./routes/follows'));
 
 // Wrap express app in http server
 const server = http.createServer(app);

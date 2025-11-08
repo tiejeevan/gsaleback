@@ -5,7 +5,7 @@ const pool = require('../db');
 exports.getPublicProfile = async (id) => {
   const { rows } = await pool.query(
     `SELECT id, username, display_name, profile_image, cover_image, about, bio,
-            location, website, social_links, created_at
+            location, website, social_links, created_at, follower_count, following_count
      FROM users
      WHERE id = $1 AND is_active = true AND deleted_at IS NULL`,
     [id]
@@ -18,7 +18,8 @@ exports.getById = async (id) => {
   const { rows } = await pool.query(
     `SELECT id, email, username, display_name, first_name, last_name, bio, about,
             profile_image, cover_image, location, website, preferences, social_links,
-            phone, role, is_verified, created_at, updated_at, last_login_at
+            phone, role, is_verified, created_at, updated_at, last_login_at,
+            follower_count, following_count
      FROM users WHERE id = $1`,
     [id]
   );
