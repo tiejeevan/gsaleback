@@ -1,15 +1,22 @@
 // services/userService.js
 const pool = require('../db');
 
-// 🟢 Public view (safe fields)
-exports.getPublicProfile = async (id) => {
-  const { rows } = await pool.query(
-    `SELECT id, username, display_name, profile_image, cover_image, about, bio,
-            location, website, social_links, created_at, follower_count, following_count
-     FROM users
-     WHERE id = $1 AND is_active = true AND deleted_at IS NULL`,
-    [id]
-  );
+// 🟢 Public view (safe fields) - supports both ID and username
+exports.getPublicProfile = async (identifier) => {
+  // Check if identifier is numeric (ID) or string (username)
+  const isNumeric = !isNaN(identifier) && !isNaN(parseFloat(identifier));
+  
+  const query = isNumeric
+    ? `SELECT id, username, display_name, profile_image, cover_image, about, bio,
+              location, website, social_links, created_at, follower_count, following_count
+       FROM users
+       WHERE id = $1 AND is_active = true AND deleted_at IS NULL`
+    : `SELECT id, username, display_name, profile_image, cover_image, about, bio,
+              location, website, social_links, created_at, follower_count, following_count
+       FROM users
+       WHERE username = $1 AND is_active = true AND deleted_at IS NULL`;
+  
+  const { rows } = await pool.query(query, [identifier]);
   return rows[0];
 };
 
