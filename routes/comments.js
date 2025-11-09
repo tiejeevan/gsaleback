@@ -128,14 +128,36 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
 
     await logCommentActivity({ userId: req.user.id, commentId: comment.id, type: 'create', success: true, req });
 
+    // Fetch user info to include in the response and socket emission
+    const userRes = await pool.query(
+      `SELECT username, first_name, last_name FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const userInfo = userRes.rows[0];
+    
+    // Create enriched comment object with user info
+    const enrichedComment = {
+      ...comment,
+      username: userInfo.username,
+      first_name: userInfo.first_name,
+      last_name: userInfo.last_name,
+      children: [], // Initialize empty children array for nested structure
+      like_count: 0, // New comment has no likes
+      liked_by_user: false // Current user hasn't liked their own comment
+    };
+
     // =================== REAL-TIME EMIT ===================
     const io = req.app.get('io');
     if (io) {
       // 1️⃣ Emit comment to all clients subscribed to this post
-      io.emit(`post_${comment.post_id}:comment:new`, comment);
+      const eventName = `post_${comment.post_id}:comment:new`;
+      console.log(`📡 Emitting ${eventName} to room post_${comment.post_id}`, enrichedComment);
+      io.to(`post_${comment.post_id}`).emit(eventName, enrichedComment);
 
       // 2️⃣ Notify post owner if commenter is not the owner
+      console.log(`📝 Post owner: ${postOwnerId}, Commenter: ${comment.user_id}`);
       if (postOwnerId !== comment.user_id) {
+        console.log(`🔔 Creating notification for post owner ${postOwnerId}`);
         const notifRes = await pool.query(
           `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
        VALUES ($1, $2, 'comment', $3) RETURNING *`,
@@ -151,7 +173,10 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
         );
 
         const roomName = `user_${postOwnerId.toString()}`;
+        console.log(`🔔 Emitting notification to room: ${roomName}`, notifRes.rows[0]);
         io.to(roomName).emit('notification:new', notifRes.rows[0]);
+      } else {
+        console.log(`⏭️ Skipping notification (user commenting on own post)`);
       }
 
       // 3️⃣ Notify mentioned users
@@ -165,7 +190,7 @@ router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
       });
     }
 
-    res.status(201).json(comment);
+    res.status(201).json(enrichedComment);
 
   } catch (err) {
     console.error('Create comment error:', err);
@@ -353,11 +378,11 @@ router.post('/:id/like', verifyToken, async (req, res) => {
   try {
     // ensure comment exists and not deleted
     const commentRes = await pool.query(
-      `SELECT id, post_id FROM comments WHERE id = $1 AND is_deleted = false`,
+      `SELECT id, post_id, user_id, content FROM comments WHERE id = $1 AND is_deleted = false`,
       [id]
     );
     if (!commentRes.rows.length) return res.status(404).json({ error: 'Comment not found' });
-    const { post_id } = commentRes.rows[0];
+    const { post_id, user_id: commentOwnerId, content } = commentRes.rows[0];
 
     // prevent duplicate
     const existsRes = await pool.query(
@@ -373,15 +398,50 @@ router.post('/:id/like', verifyToken, async (req, res) => {
 
     await logCommentActivity({ userId: req.user.id, commentId: id, type: 'like', success: true, req });
 
-    // Real-time emit
+    // Real-time emit for like count update
     const io = req.app.get('io');
     if (io) {
-      io.emit(`post_${post_id}:comment:like:new`, {
+      io.to(`post_${post_id}`).emit(`post_${post_id}:comment:like:new`, {
         post_id,
         comment_id: Number(id),
         user_id: req.user.id,
         reaction_type: 'like',
       });
+
+      // Send notification to comment owner (if not liking own comment)
+      if (commentOwnerId !== req.user.id) {
+        // Check if notification already exists for this comment and user combination
+        const existingNotification = await pool.query(
+          `SELECT id FROM notifications 
+           WHERE recipient_user_id = $1 AND actor_user_id = $2 AND type = 'comment_like' 
+           AND payload->>'comment_id' = $3`,
+          [commentOwnerId, req.user.id, id.toString()]
+        );
+
+        // Only create notification if it doesn't exist
+        if (existingNotification.rows.length === 0) {
+          const notificationResult = await pool.query(
+            `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload, is_read, created_at)
+             VALUES ($1, $2, 'comment_like', $3, false, CURRENT_TIMESTAMP)
+             RETURNING *`,
+            [
+              commentOwnerId,
+              req.user.id,
+              JSON.stringify({
+                comment_id: Number(id),
+                post_id,
+                text: content?.slice(0, 50),
+                message: 'liked your comment'
+              })
+            ]
+          );
+
+          // Send real-time notification
+          const roomName = `user_${commentOwnerId}`;
+          io.to(roomName).emit('notification:new', notificationResult.rows[0]);
+          console.log(`🔔 Sent comment like notification to user_${commentOwnerId}`);
+        }
+      }
     }
 
     res.json({ msg: 'Comment liked' });
@@ -412,7 +472,7 @@ router.post('/:id/unlike', verifyToken, async (req, res) => {
     // Real-time emit
     const io = req.app.get('io');
     if (io && post_id) {
-      io.emit(`post_${post_id}:comment:like:new`, {
+      io.to(`post_${post_id}`).emit(`post_${post_id}:comment:like:new`, {
         post_id,
         comment_id: Number(id),
         user_id: req.user.id,

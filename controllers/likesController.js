@@ -76,12 +76,16 @@ exports.addLike = async (req, res) => {
     // Emit like event for real-time like updates
     const io = req.app.get('io');
     if (io) {
-      io.emit(`post_${target_id}:like:new`, {
+      // Emit to the specific post room
+      const eventName = `post_${target_id}:like:new`;
+      const eventData = {
         target_type,
         target_id,
         user_id: userId,
         reaction_type,
-      });
+      };
+      console.log(`📡 Emitting ${eventName} to room post_${target_id}:`, eventData);
+      io.to(`post_${target_id}`).emit(eventName, eventData);
     }
 
     res.status(201).json({ success: true, like: result.rows[0] });
@@ -108,12 +112,16 @@ exports.removeLike = async (req, res) => {
     // Emit socket event for real-time update
     const io = req.app.get('io');
     if (io) {
-      io.emit(`post_${target_id}:like:new`, {
+      // Emit to the specific post room
+      const eventName = `post_${target_id}:like:new`;
+      const eventData = {
         target_type,
         target_id,
         user_id: userId,
         reaction_type: 'unlike', // mark it as unlike
-      });
+      };
+      console.log(`📡 Emitting ${eventName} to room post_${target_id}:`, eventData);
+      io.to(`post_${target_id}`).emit(eventName, eventData);
     }
     res.json({ success: true, message: 'Like removed' });
   } catch (err) {

@@ -40,6 +40,7 @@ io.on('connection', (socket) => {
   // Handle room joining
   socket.on('join', (room) => {
     socket.join(room);
+    console.log(`Socket ${socket.id} joined room: ${room}`);
     socket.emit('joined', room);
   });
 
