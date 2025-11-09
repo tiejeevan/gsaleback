@@ -1,5 +1,6 @@
 // controllers/postsController.js
 const postsService = require('../services/postsService');
+const pool = require('../db');
 
 class PostsController {
   // Create a new post
@@ -19,11 +20,29 @@ class PostsController {
     
     const userId = req.user.id;
 
+    console.log('📥 Received request body:', { content, mentions, visibility });
+    console.log('📥 Mentions type:', typeof mentions);
+    console.log('📥 Mentions value:', mentions);
+
     if (!content || content.trim() === '' && (!req.files || req.files.length === 0)) {
       return res.status(400).json({ error: 'Post content or files cannot be empty' });
     }
 
     try {
+      // Parse mentions if it's a string
+      let mentionsArray = mentions;
+      if (typeof mentions === 'string') {
+        try {
+          mentionsArray = JSON.parse(mentions);
+          console.log('✅ Parsed mentions from string:', mentionsArray);
+        } catch (e) {
+          console.log('❌ Failed to parse mentions:', e.message);
+          mentionsArray = [];
+        }
+      } else if (Array.isArray(mentions)) {
+        console.log('✅ Mentions already an array:', mentionsArray);
+      }
+
       // Create post
       const post = await postsService.createPost({
         userId,
@@ -32,7 +51,7 @@ class PostsController {
         postType: post_type,
         visibility,
         tags,
-        mentions,
+        mentions: mentionsArray,
         location,
         metadata,
         scheduledAt: scheduled_at,
@@ -44,6 +63,71 @@ class PostsController {
         post.attachments = await postsService.uploadAttachments(post.id, req.files);
       } else {
         post.attachments = [];
+      }
+
+      // Send notifications to mentioned users
+      console.log('📝 Mentions received:', mentionsArray);
+      if (mentionsArray && mentionsArray.length > 0) {
+        try {
+          console.log('🔍 Looking up mentioned users:', mentionsArray);
+          
+          // Get user IDs for mentioned usernames
+          const userResult = await pool.query(
+            `SELECT id, username FROM users WHERE username = ANY($1::text[])`,
+            [mentionsArray]
+          );
+          
+          const mentionedUsers = userResult.rows;
+          console.log('👥 Found mentioned users:', mentionedUsers);
+          
+          const mentionerResult = await pool.query(
+            `SELECT username FROM users WHERE id = $1`,
+            [userId]
+          );
+          const mentionerUsername = mentionerResult.rows[0]?.username || 'Someone';
+          console.log('👤 Mentioner username:', mentionerUsername);
+          
+          // Create notifications for each mentioned user
+          for (const mentionedUser of mentionedUsers) {
+            if (mentionedUser.id !== userId) { // Don't notify yourself
+              console.log(`📬 Creating notification for user ${mentionedUser.username} (ID: ${mentionedUser.id})`);
+              
+              const notifResult = await pool.query(
+                `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload, is_read, created_at)
+                 VALUES ($1, $2, 'mention', $3, false, CURRENT_TIMESTAMP)
+                 RETURNING *`,
+                [
+                  mentionedUser.id,
+                  userId,
+                  JSON.stringify({
+                    postId: post.id,
+                    text: content?.slice(0, 100),
+                    mentionerUsername
+                  })
+                ]
+              );
+              
+              console.log('✅ Notification created:', notifResult.rows[0]);
+              
+              // Emit real-time notification if socket.io is available
+              if (req.app.get('io')) {
+                const io = req.app.get('io');
+                const notification = notifResult.rows[0];
+                console.log(`🔔 Emitting real-time notification to user_${mentionedUser.id}`);
+                io.to(`user_${mentionedUser.id}`).emit('notification:new', notification);
+              } else {
+                console.log('⚠️ Socket.io not available');
+              }
+            } else {
+              console.log('⏭️ Skipping self-mention');
+            }
+          }
+        } catch (notifErr) {
+          console.error('❌ Error sending mention notifications:', notifErr);
+          // Don't fail the post creation if notifications fail
+        }
+      } else {
+        console.log('ℹ️ No mentions to process');
       }
 
       // Log activity
