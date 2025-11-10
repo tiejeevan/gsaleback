@@ -93,34 +93,52 @@ exports.getOrCreateDirectChat = async (req, res) => {
     if (!otherUserId) {
         return res.status(400).json({ success: false, message: 'otherUserId is required' });
     }
-    
-    if (userId === otherUserId) {
-        return res.status(400).json({ success: false, message: 'Cannot create chat with yourself' });
-    }
 
     const client = await pool.connect();
     try {
-        // Check if direct chat already exists between these two users
-        // Find chats where both users are participants
-        const existingChat = await client.query(`
-            SELECT c.id 
-            FROM chats c
-            WHERE c.type = 'direct'
-            AND c.id IN (
-                SELECT chat_id FROM chat_participants 
-                WHERE user_id = $1 AND left_at IS NULL
-            )
-            AND c.id IN (
-                SELECT chat_id FROM chat_participants 
-                WHERE user_id = $2 AND left_at IS NULL
-            )
-            -- Ensure it's exactly a 2-person chat
-            AND (
-                SELECT COUNT(*) FROM chat_participants 
-                WHERE chat_id = c.id AND left_at IS NULL
-            ) = 2
-            LIMIT 1
-        `, [userId, otherUserId]);
+        const isSelfChat = userId === otherUserId;
+
+        // Check if direct chat already exists
+        let existingChat;
+        
+        if (isSelfChat) {
+            // For self-chat, find chat where user is the only participant
+            existingChat = await client.query(`
+                SELECT c.id 
+                FROM chats c
+                WHERE c.type = 'direct'
+                AND c.id IN (
+                    SELECT chat_id FROM chat_participants 
+                    WHERE user_id = $1 AND left_at IS NULL
+                )
+                AND (
+                    SELECT COUNT(DISTINCT user_id) FROM chat_participants 
+                    WHERE chat_id = c.id AND left_at IS NULL
+                ) = 1
+                LIMIT 1
+            `, [userId]);
+        } else {
+            // For regular chat, find chats where both users are participants
+            existingChat = await client.query(`
+                SELECT c.id 
+                FROM chats c
+                WHERE c.type = 'direct'
+                AND c.id IN (
+                    SELECT chat_id FROM chat_participants 
+                    WHERE user_id = $1 AND left_at IS NULL
+                )
+                AND c.id IN (
+                    SELECT chat_id FROM chat_participants 
+                    WHERE user_id = $2 AND left_at IS NULL
+                )
+                -- Ensure it's exactly a 2-person chat
+                AND (
+                    SELECT COUNT(*) FROM chat_participants 
+                    WHERE chat_id = c.id AND left_at IS NULL
+                ) = 2
+                LIMIT 1
+            `, [userId, otherUserId]);
+        }
 
         if (existingChat.rows.length > 0) {
             return res.json({ success: true, chatId: existingChat.rows[0].id, created: false });
@@ -137,12 +155,21 @@ exports.getOrCreateDirectChat = async (req, res) => {
 
         const chatId = chatResult.rows[0].id;
 
-        await client.query(`
-            INSERT INTO chat_participants (chat_id, user_id, role)
-            VALUES 
-                ($1, $2, 'member'),
-                ($1, $3, 'member')
-        `, [chatId, userId, otherUserId]);
+        if (isSelfChat) {
+            // For self-chat, add user only once
+            await client.query(`
+                INSERT INTO chat_participants (chat_id, user_id, role)
+                VALUES ($1, $2, 'member')
+            `, [chatId, userId]);
+        } else {
+            // For regular chat, add both users
+            await client.query(`
+                INSERT INTO chat_participants (chat_id, user_id, role)
+                VALUES 
+                    ($1, $2, 'member'),
+                    ($1, $3, 'member')
+            `, [chatId, userId, otherUserId]);
+        }
 
         await client.query('COMMIT');
 
