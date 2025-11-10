@@ -24,6 +24,8 @@ app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/users", require("./routes/users"));
 app.use('/api/chats', require('./routes/chats'));
 app.use('/api/follows', require('./routes/follows'));
+app.use('/api/admin', require('./routes/admin'));
+app.use('/api/test', require('./routes/test'));
 
 // Wrap express app in http server
 const server = http.createServer(app);

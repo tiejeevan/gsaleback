@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "npm run test:admin && npm run test:realtime",
+    "test:admin": "node test-admin-actions.js",
+    "test:realtime": "node test-realtime-features.js",
+    "start": "node server.js"
   },
   "keywords": [],
   "author": "",
@@ -19,6 +22,7 @@
     "jsonwebtoken": "^9.0.2",
     "multer": "^2.0.2",
     "pg": "^8.16.3",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
   }
 }

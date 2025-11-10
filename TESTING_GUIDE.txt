@@ -1,0 +1,122 @@
+================================================================================
+                    ADMIN TESTING SYSTEM - USER GUIDE
+================================================================================
+
+OVERVIEW
+--------
+The admin testing system allows administrators to test all platform features
+including admin actions, real-time notifications, and user interactions.
+
+FEATURES
+--------
+1. Admin Actions Testing
+   - User creation and authentication
+   - Mute/unmute functionality
+   - Suspend/unsuspend functionality
+   - Soft delete and restore
+   - Permission enforcement
+
+2. Real-Time Features Testing
+   - Socket connections
+   - Post notifications
+   - Comment notifications
+   - Mention notifications
+   - Like notifications
+   - Follow notifications
+   - Real-time comment updates
+
+ACCESSING THE TEST DASHBOARD
+-----------------------------
+1. Login as an admin user
+2. Navigate to Admin Dashboard
+3. Click "🧪 Test Dashboard" button in the top right
+4. Or go directly to: http://localhost:3000/admin/tests
+
+RUNNING TESTS VIA WEB INTERFACE
+--------------------------------
+1. Go to Admin Test Dashboard
+2. Configure test username and password (optional)
+3. Click "Run Tests" on either test suite:
+   - Admin Actions Test
+   - Real-Time Features Test
+4. View results in real-time
+5. Check summary for passed/failed tests
+
+RUNNING TESTS VIA COMMAND LINE
+-------------------------------
+1. Admin Actions Test:
+   cd gsaleback
+   node test-admin-actions.js
+
+2. Real-Time Features Test:
+   cd gsaleback
+   node test-realtime-features.js
+
+TEST RESULTS
+------------
+Each test will show:
+- ✅ Green checkmark = Test passed
+- ❌ Red X = Test failed
+- Test name and description
+- Detailed error messages for failures
+- Summary with total passed/failed
+
+TROUBLESHOOTING
+---------------
+1. Tests failing to connect:
+   - Ensure backend server is running on port 5001
+   - Check that database is accessible
+   - Verify admin credentials are correct
+
+2. Socket tests failing:
+   - Ensure Socket.IO is properly configured
+   - Check that ports are not blocked
+   - Verify real-time features are enabled
+
+3. Permission tests failing:
+   - Restart backend server after middleware changes
+   - Check that admin user has proper role
+   - Verify database user status fields
+
+ADDING NEW TESTS
+----------------
+1. Backend Test Script:
+   - Add test function to test-admin-actions.js or test-realtime-features.js
+   - Use logTest() function to record results
+   - Add to runTests() sequence
+
+2. Frontend Dashboard:
+   - Add test name to testSuites array in AdminTestDashboard.tsx
+   - Test will automatically appear in UI
+
+3. API Endpoint:
+   - Tests run through /api/test/admin-actions or /api/test/realtime
+   - Modify routes/test.js to add new endpoints
+
+BEST PRACTICES
+--------------
+1. Run tests after any major changes
+2. Test in development environment first
+3. Review failed tests immediately
+4. Keep test users separate from real users
+5. Clean up test data periodically
+
+AUTOMATED TESTING
+-----------------
+You can integrate these tests into CI/CD:
+1. Add to package.json scripts:
+   "test:admin": "node gsaleback/test-admin-actions.js"
+   "test:realtime": "node gsaleback/test-realtime-features.js"
+
+2. Run in CI pipeline:
+   npm run test:admin
+   npm run test:realtime
+
+SECURITY NOTES
+--------------
+- Test endpoints should be protected in production
+- Use environment variables for test credentials
+- Limit test execution to admin users only
+- Monitor test execution logs
+
+================================================================================

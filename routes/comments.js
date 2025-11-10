@@ -1,25 +1,11 @@
 const express = require('express');
 const router = express.Router();
-const jwt = require('jsonwebtoken');
 const pool = require('../db');
 const multer = require('multer');
 const mentionsService = require('../services/mentionsService');
+const verifyToken = require('../middleware/authMiddleware');
+const canWrite = require('../middleware/canWriteMiddleware');
 require('dotenv').config({ path: '.env' });
-
-// ================= Middleware: Verify Token =================
-const verifyToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) return res.status(401).json({ error: 'No token provided' });
-
-  const token = authHeader.split(' ')[1];
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // { id: userId }
-    next();
-  } catch (err) {
-    res.status(401).json({ error: 'Invalid token' });
-  }
-};
 
 // Multer memory storage for file uploads (optional)
 const storage = multer.memoryStorage();
@@ -64,7 +50,7 @@ const buildCommentsTree = (rows) => {
 };
 
 // ================= Create a new comment =================
-router.post('/', verifyToken, upload.array('files', 10), async (req, res) => {
+router.post('/', verifyToken, canWrite, upload.array('files', 10), async (req, res) => {
   const { post_id, parent_comment_id, content } = req.body;
 
   if ((!content || content.trim() === '') && (!req.files || req.files.length === 0)) {
@@ -261,7 +247,7 @@ router.get('/:postId', verifyToken, async (req, res) => {
   
 
 // ================= Edit a comment =================
-router.put('/:id', verifyToken, async (req, res) => {
+router.put('/:id', verifyToken, canWrite, async (req, res) => {
   const { content, attachments } = req.body; // attachments optional JSON array
   const { id } = req.params;
 
@@ -329,7 +315,7 @@ router.put('/:id', verifyToken, async (req, res) => {
 });
 
 // ================= Soft delete a comment (with nested replies) =================
-router.delete('/:id', verifyToken, async (req, res) => {
+router.delete('/:id', verifyToken, canWrite, async (req, res) => {
     const { id } = req.params;
   
     try {
@@ -407,7 +393,7 @@ router.delete('/:id', verifyToken, async (req, res) => {
   
 
 // ================= Like a comment =================
-router.post('/:id/like', verifyToken, async (req, res) => {
+router.post('/:id/like', verifyToken, canWrite, async (req, res) => {
   const { id } = req.params;
   try {
     // ensure comment exists and not deleted
@@ -486,7 +472,7 @@ router.post('/:id/like', verifyToken, async (req, res) => {
 });
 
 // ================= Unlike a comment =================
-router.post('/:id/unlike', verifyToken, async (req, res) => {
+router.post('/:id/unlike', verifyToken, canWrite, async (req, res) => {
   const { id } = req.params;
   try {
     // fetch comment to get post id for channel emit

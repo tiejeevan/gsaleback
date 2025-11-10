@@ -1,0 +1,56 @@
+========================================
+ADMIN DASHBOARD SETUP INSTRUCTIONS
+========================================
+
+1. RUN DATABASE MIGRATION
+   ------------------------
+   cd gsaleback
+   node database/migrations/run-admin-migration.js
+
+2. MAKE A USER ADMIN
+   ------------------
+   Connect to your PostgreSQL database and run:
+   
+   UPDATE users SET role = 'admin' WHERE username = 'your_username';
+   
+   OR use psql:
+   
+   psql $DATABASE_URL -c "UPDATE users SET role = 'admin' WHERE username = 'your_username';"
+
+3. RESTART YOUR BACKEND SERVER
+   ----------------------------
+   The admin routes are now available at /api/admin/*
+
+4. ACCESS ADMIN DASHBOARD
+   -----------------------
+   - Login with your admin user
+   - Navigate to /admin in the frontend
+   - Or click "Admin Dashboard" in the profile menu
+
+========================================
+ADMIN FEATURES
+========================================
+
+✅ View all users with pagination and filters
+✅ Search users by name, username, or email
+✅ Filter by status (active, muted, suspended, deactivated)
+✅ Filter by role (user, admin)
+✅ Edit user profiles (name, email, bio)
+✅ Mute users (prevent posting/commenting)
+✅ Suspend users (block account access)
+✅ Soft delete users (reversible)
+✅ Restore deleted users
+✅ Permanently delete users (irreversible)
+✅ View admin action logs
+✅ Dashboard statistics
+
+========================================
+SECURITY NOTES
+========================================
+
+⚠️  Admin role can ONLY be set via database
+⚠️  All admin actions are logged
+⚠️  Admin routes require authentication + admin role
+⚠️  Frontend checks user role before showing admin UI
+
+========================================

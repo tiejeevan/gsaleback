@@ -1,0 +1,82 @@
+========================================
+ADMIN API ENDPOINTS
+========================================
+
+BASE URL: /api/admin
+Authentication: Required (Bearer token)
+Authorization: Admin role required
+
+========================================
+DASHBOARD & STATS
+========================================
+
+GET /api/admin/stats
+- Get dashboard statistics
+- Returns: total users, active, muted, suspended, deleted counts
+
+========================================
+USER MANAGEMENT
+========================================
+
+GET /api/admin/users
+Query params:
+  - page (default: 1)
+  - limit (default: 20)
+  - search (username, email, name)
+  - status (active, muted, suspended, deactivated)
+  - role (user, admin)
+  - includeDeleted (true/false)
+
+GET /api/admin/users/:id
+- Get detailed user info with stats
+
+PUT /api/admin/users/:id
+Body: { first_name, last_name, email, bio }
+- Update user profile
+
+========================================
+USER STATUS ACTIONS
+========================================
+
+POST /api/admin/users/:id/mute
+Body: { reason: "string" }
+- Mute user (prevent posting/commenting)
+
+POST /api/admin/users/:id/unmute
+- Unmute user
+
+POST /api/admin/users/:id/suspend
+Body: { reason: "string" }
+- Suspend user (block account access)
+
+POST /api/admin/users/:id/unsuspend
+- Unsuspend user
+
+========================================
+USER DELETION
+========================================
+
+DELETE /api/admin/users/:id/soft
+Body: { reason: "string" }
+- Soft delete user (reversible)
+
+POST /api/admin/users/:id/restore
+- Restore soft-deleted user
+
+DELETE /api/admin/users/:id/permanent
+Body: { reason: "string" }
+- Permanently delete user (IRREVERSIBLE)
+
+========================================
+ADMIN LOGS
+========================================
+
+GET /api/admin/logs
+Query params:
+  - page (default: 1)
+  - limit (default: 50)
+  - adminId (filter by admin)
+  - targetUserId (filter by target user)
+  - actionType (filter by action)
+
+========================================

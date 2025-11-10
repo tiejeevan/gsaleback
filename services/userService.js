@@ -26,11 +26,16 @@ exports.getById = async (id) => {
     `SELECT id, email, username, display_name, first_name, last_name, bio, about,
             profile_image, cover_image, location, website, preferences, social_links,
             phone, role, is_verified, created_at, updated_at, last_login_at,
-            follower_count, following_count
+            follower_count, following_count, status
      FROM users WHERE id = $1`,
     [id]
   );
-  return rows[0];
+  // Ensure role defaults to 'user' if not set
+  const user = rows[0];
+  if (user && !user.role) {
+    user.role = 'user';
+  }
+  return user;
 };
 
 // 🟢 Dynamic update helper
