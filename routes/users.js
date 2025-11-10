@@ -10,6 +10,7 @@ router.put('/me', auth, usersController.updateMe);
 router.put('/me/password', auth, usersController.changePassword);
 router.patch('/me/deactivate', auth, usersController.deactivateMe);
 router.get('/search/mentions', auth, usersController.searchUsersForMentions);
+router.get('/search', auth, usersController.searchActiveUsers);
 
 // Public routes - GENERIC ROUTES LAST
 router.get('/:id', usersController.getPublicProfile);

@@ -7,6 +7,7 @@
     "test": "npm run test:admin && npm run test:realtime",
     "test:admin": "node test-admin-actions.js",
     "test:realtime": "node test-realtime-features.js",
+    "setup:search": "node scripts/add-search-indexes.js",
     "start": "node server.js"
   },
   "keywords": [],

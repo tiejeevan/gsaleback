@@ -94,3 +94,20 @@ exports.searchUsersForMentions = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
+
+// ✅ 7. Search active users (general search with min 2 chars)
+exports.searchActiveUsers = async (req, res) => {
+  try {
+    const { q } = req.query;
+    
+    if (!q || q.trim().length < 2) {
+      return res.json({ success: true, users: [] });
+    }
+    
+    const users = await userService.searchActiveUsers(q.trim(), req.user.id);
+    res.json({ success: true, users });
+  } catch (err) {
+    console.error('Error searching active users:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};

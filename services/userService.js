@@ -78,3 +78,26 @@ exports.searchForMentions = async (query, currentUserId, limit = 10) => {
   );
   return rows;
 };
+
+// 🟢 Search active users (general search)
+exports.searchActiveUsers = async (query, currentUserId, limit = 20) => {
+  const { rows } = await pool.query(
+    `SELECT id, username, display_name, profile_image, first_name, last_name, bio, follower_count
+     FROM users
+     WHERE (username ILIKE $1 OR display_name ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
+       AND is_active = true 
+       AND deleted_at IS NULL
+       AND id != $2
+     ORDER BY 
+       CASE 
+         WHEN username ILIKE $3 THEN 1
+         WHEN display_name ILIKE $3 THEN 2
+         WHEN first_name ILIKE $3 THEN 3
+         ELSE 4
+       END,
+       follower_count DESC NULLS LAST
+     LIMIT $4`,
+    [`%${query}%`, currentUserId, `${query}%`, limit]
+  );
+  return rows;
+};
