@@ -10,6 +10,9 @@ const commentsRoute = require("./routes/comments");
 dotenv.config();
 const app = express();
 
+// Trust proxy - important for getting real IP addresses behind reverse proxies (Render, Heroku, etc.)
+app.set('trust proxy', true);
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -25,6 +28,8 @@ app.use("/api/users", require("./routes/users"));
 app.use('/api/chats', require('./routes/chats'));
 app.use('/api/follows', require('./routes/follows'));
 app.use('/api/admin', require('./routes/admin'));
+app.use('/api/database', require('./routes/database'));
+app.use('/api/user-monitoring', require('./routes/userMonitoring'));
 app.use('/api/test', require('./routes/test'));
 
 // Wrap express app in http server

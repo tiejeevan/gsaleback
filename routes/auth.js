@@ -4,13 +4,64 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const pool = require('../db'); // Postgres connection
 
-// Helper to log user activities
-const logActivity = async ({ userId, type, success, req }) => {
+// Helper to generate session ID
+const generateSessionId = () => {
+    return `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+};
+
+// Helper to extract device info from user agent
+const getDeviceInfo = (userAgent) => {
+    if (!userAgent) return null;
+    
+    const isMobile = /mobile/i.test(userAgent);
+    const isTablet = /tablet|ipad/i.test(userAgent);
+    const isDesktop = !isMobile && !isTablet;
+    
+    let os = 'Unknown';
+    if (/windows/i.test(userAgent)) os = 'Windows';
+    else if (/mac/i.test(userAgent)) os = 'macOS';
+    else if (/linux/i.test(userAgent)) os = 'Linux';
+    else if (/android/i.test(userAgent)) os = 'Android';
+    else if (/ios|iphone|ipad/i.test(userAgent)) os = 'iOS';
+    
+    let browser = 'Unknown';
+    if (/chrome/i.test(userAgent) && !/edg/i.test(userAgent)) browser = 'Chrome';
+    else if (/safari/i.test(userAgent) && !/chrome/i.test(userAgent)) browser = 'Safari';
+    else if (/firefox/i.test(userAgent)) browser = 'Firefox';
+    else if (/edg/i.test(userAgent)) browser = 'Edge';
+    
+    return {
+        type: isDesktop ? 'desktop' : isTablet ? 'tablet' : 'mobile',
+        os,
+        browser,
+        isMobile,
+        isTablet,
+        isDesktop,
+        userAgent
+    };
+};
+
+// Helper to log user activities with enhanced tracking
+const logActivity = async ({ userId, type, success, req, sessionId = null, errorMessage = null, metadata = null, duration = null }) => {
     try {
+        const userAgent = req.get('User-Agent');
+        const deviceInfo = getDeviceInfo(userAgent);
+        
         await pool.query(
-            `INSERT INTO user_logs (user_id, activity_type, ip_address, user_agent, success)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [userId, type, req.ip, req.get('User-Agent'), success]
+            `INSERT INTO user_logs (user_id, activity_type, ip_address, user_agent, success, session_id, device_info, error_message, metadata, duration)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [
+                userId, 
+                type, 
+                req.ip, 
+                userAgent, 
+                success,
+                sessionId,
+                deviceInfo ? JSON.stringify(deviceInfo) : null,
+                errorMessage,
+                metadata ? JSON.stringify(metadata) : null,
+                duration
+            ]
         );
     } catch (err) {
         console.error('Error logging activity:', err.message);
@@ -71,24 +122,53 @@ router.post('/signin', async (req, res) => {
         const user = userRes.rows[0];
 
         if (!user) {
-            await logActivity({ userId: null, type: 'failed_login', success: false, req });
+            await logActivity({ 
+                userId: null, 
+                type: 'failed_login', 
+                success: false, 
+                req,
+                errorMessage: 'User not found',
+                metadata: { username }
+            });
             return res.status(400).json({ msg: 'User not found' });
         }
 
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
-            await logActivity({ userId: user.id, type: 'failed_login', success: false, req });
+            await logActivity({ 
+                userId: user.id, 
+                type: 'failed_login', 
+                success: false, 
+                req,
+                errorMessage: 'Invalid password',
+                metadata: { username }
+            });
             return res.status(400).json({ msg: 'Invalid credentials' });
         }
 
-        // JWT token
-        const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '1d' });
+        // Generate session ID for tracking
+        const sessionId = generateSessionId();
 
-        // Log successful signin
-        await logActivity({ userId: user.id, type: 'signin', success: true, req });
+        // JWT token with session ID
+        const token = jwt.sign(
+            { id: user.id, sessionId }, 
+            process.env.JWT_SECRET, 
+            { expiresIn: '1d' }
+        );
+
+        // Log successful signin with session ID
+        await logActivity({ 
+            userId: user.id, 
+            type: 'signin', 
+            success: true, 
+            req,
+            sessionId,
+            metadata: { role: user.role }
+        });
 
         res.json({
             token,
+            sessionId, // Send session ID to frontend for logout tracking
             user: {
                 id: user.id,
                 first_name: user.first_name,
@@ -108,10 +188,29 @@ router.post('/signin', async (req, res) => {
 // ================= Signout =================
 router.post('/signout', async (req, res) => {
     try {
-        const userId = req.body.userId; // Frontend should send the userId
-        if (!userId) return res.status(400).json({ msg: 'User ID required for signout' });
+        const { userId, sessionId, loginTime } = req.body;
+        
+        if (!userId) {
+            return res.status(400).json({ msg: 'User ID required for signout' });
+        }
 
-        await logActivity({ userId, type: 'signout', success: true, req });
+        // Calculate session duration if loginTime provided
+        let duration = null;
+        if (loginTime) {
+            const loginDate = new Date(loginTime);
+            const now = new Date();
+            duration = Math.floor((now - loginDate) / 1000); // Duration in seconds
+        }
+
+        await logActivity({ 
+            userId, 
+            type: 'signout', 
+            success: true, 
+            req,
+            sessionId,
+            duration,
+            metadata: { manual_logout: true }
+        });
 
         res.json({ msg: 'Signout logged successfully' });
 
