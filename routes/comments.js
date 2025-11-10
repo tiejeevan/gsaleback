@@ -299,7 +299,29 @@ router.put('/:id', verifyToken, async (req, res) => {
 
     await logCommentActivity({ userId: req.user.id, commentId: id, type: 'edit', success: true, req });
 
-    res.json(updated.rows[0]);
+    // Fetch user info to include in the response
+    const userRes = await pool.query(
+      `SELECT username, first_name, last_name FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    const userInfo = userRes.rows[0];
+    
+    const enrichedComment = {
+      ...updated.rows[0],
+      username: userInfo.username,
+      first_name: userInfo.first_name,
+      last_name: userInfo.last_name,
+    };
+
+    // =================== REAL-TIME EMIT ===================
+    const io = req.app.get('io');
+    if (io) {
+      const eventName = `post_${comment.post_id}:comment:edit`;
+      console.log(`📡 Emitting ${eventName} to room post_${comment.post_id}`, enrichedComment);
+      io.to(`post_${comment.post_id}`).emit(eventName, enrichedComment);
+    }
+
+    res.json(enrichedComment);
   } catch (err) {
     console.error('Edit comment error:', err);
     res.status(500).json({ error: 'Failed to edit comment', details: err.message });
@@ -359,6 +381,18 @@ router.delete('/:id', verifyToken, async (req, res) => {
         success: true,
         req,
       });
+
+      // =================== REAL-TIME EMIT ===================
+      const io = req.app.get('io');
+      if (io) {
+        // Emit delete event to all clients subscribed to this post
+        const eventName = `post_${comment.post_id}:comment:delete`;
+        console.log(`📡 Emitting ${eventName} to room post_${comment.post_id}`, { commentIds: allIdsToDelete });
+        io.to(`post_${comment.post_id}`).emit(eventName, { 
+          commentIds: allIdsToDelete,
+          deletedCount: allIdsToDelete.length 
+        });
+      }
   
       res.json({
         msg: `Deleted ${allIdsToDelete.length} comment(s) (including replies)`,
