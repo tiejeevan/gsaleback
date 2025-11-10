@@ -151,8 +151,11 @@ class PostsController {
   async getAllPosts(req, res) {
     try {
       const currentUserId = req.user.id;
-      const posts = await postsService.getAllPosts(currentUserId);
-      res.json(posts);
+      const limit = parseInt(req.query.limit) || 20;
+      const offset = parseInt(req.query.offset) || 0;
+      
+      const result = await postsService.getAllPosts(currentUserId, limit, offset);
+      res.json(result);
     } catch (err) {
       console.error('Error fetching posts:', err);
       res.status(500).json({ error: 'Failed to fetch posts' });

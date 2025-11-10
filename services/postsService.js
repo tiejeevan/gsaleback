@@ -71,17 +71,33 @@ class PostsService {
   }
 
   // Get all posts with full details
-  async getAllPosts(currentUserId) {
+  async getAllPosts(currentUserId, limit = 20, offset = 0) {
     const postsResult = await pool.query(
       `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image
        FROM posts p
        JOIN users u ON p.user_id = u.id
        WHERE p.is_deleted = false AND p.status = 'published' AND p.visibility = 'public'
-       ORDER BY p.created_at DESC`
+       ORDER BY p.created_at DESC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset]
     );
 
     const posts = postsResult.rows.map(p => ({ ...p, user_id: Number(p.user_id) }));
-    return this.enrichPostsWithDetails(posts, currentUserId);
+    
+    // Get total count for pagination
+    const countResult = await pool.query(
+      `SELECT COUNT(*) as total
+       FROM posts p
+       WHERE p.is_deleted = false AND p.status = 'published' AND p.visibility = 'public'`
+    );
+    
+    const enrichedPosts = await this.enrichPostsWithDetails(posts, currentUserId);
+    
+    return {
+      posts: enrichedPosts,
+      total: parseInt(countResult.rows[0].total),
+      hasMore: offset + limit < parseInt(countResult.rows[0].total)
+    };
   }
 
   // Get posts by user ID
