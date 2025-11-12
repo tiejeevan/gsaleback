@@ -82,19 +82,36 @@ router.post('/signup', async (req, res) => {
             return res.status(400).json({ msg: 'Username already exists' });
         }
 
-        // Hash password
-        const hashedPassword = await bcrypt.hash(password, 10);
+        // Check if password encryption is enabled
+        const encryptionSetting = await pool.query(
+            "SELECT setting_value FROM system_settings WHERE setting_key = 'password_encryption_enabled'"
+        );
+        
+        const isEncryptionEnabled = encryptionSetting.rows.length > 0 
+            ? encryptionSetting.rows[0].setting_value === 'true'
+            : true; // Default to true if setting doesn't exist
+
+        // Hash password only if encryption is enabled
+        const finalPassword = isEncryptionEnabled 
+            ? await bcrypt.hash(password, 10)
+            : password;
 
         // Insert new user
         const newUser = await pool.query(
             `INSERT INTO users (first_name, last_name, username, email, password)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING id, first_name, last_name, username, email, role`,
-            [first_name, last_name, username, email, hashedPassword]
+            [first_name, last_name, username, email, finalPassword]
         );
 
         // Log signup activity
-        await logActivity({ userId: newUser.rows[0].id, type: 'signup', success: true, req });
+        await logActivity({ 
+            userId: newUser.rows[0].id, 
+            type: 'signup', 
+            success: true, 
+            req,
+            metadata: { password_encrypted: isEncryptionEnabled }
+        });
 
         // Create JWT token
         const token = jwt.sign(
@@ -133,7 +150,18 @@ router.post('/signin', async (req, res) => {
             return res.status(400).json({ msg: 'User not found' });
         }
 
-        const isMatch = await bcrypt.compare(password, user.password);
+        // Check if password is encrypted (starts with bcrypt hash pattern)
+        const isPasswordEncrypted = user.password.startsWith('$2');
+        
+        let isMatch = false;
+        if (isPasswordEncrypted) {
+            // Compare encrypted password
+            isMatch = await bcrypt.compare(password, user.password);
+        } else {
+            // Compare plain text password
+            isMatch = password === user.password;
+        }
+
         if (!isMatch) {
             await logActivity({ 
                 userId: user.id, 
