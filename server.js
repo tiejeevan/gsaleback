@@ -33,6 +33,10 @@ app.use('/api/admin', require('./routes/admin'));
 app.use('/api/database', require('./routes/database'));
 app.use('/api/user-monitoring', require('./routes/userMonitoring'));
 app.use('/api/test', require('./routes/test'));
+app.use('/api/products', require('./routes/products'));
+app.use('/api/cart', require('./routes/cart'));
+app.use('/api/orders', require('./routes/orders'));
+app.use('/api/addresses', require('./routes/addresses'));
 
 // Wrap express app in http server
 const server = http.createServer(app);
