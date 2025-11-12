@@ -28,3 +28,27 @@ build/
 
 # Optional: Coverage reports (if you use testing)
 coverage/
+
+# Database check/test files
+check-*.js
+test-*.js
+*-test.js
+
+# Scripts folder
+scripts/check-*.js
+scripts/test-*.js
+scripts/fix-*.js
+scripts/verify-*.js
+scripts/find-*.js
+scripts/add-*.js
+scripts/create-*.js
+
+# SQL files (database already set up)
+*.sql
+
+# Markdown documentation
+*.md
+
+# Temporary files
+*.tmp
+*.temp
