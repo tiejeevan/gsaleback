@@ -27,6 +27,8 @@ app.use("/api/notifications", require("./routes/notifications"));
 app.use("/api/users", require("./routes/users"));
 app.use('/api/chats', require('./routes/chats'));
 app.use('/api/follows', require('./routes/follows'));
+app.use('/api/bookmarks', require('./routes/bookmarks'));
+app.use('/api/news', require('./routes/news'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/database', require('./routes/database'));
 app.use('/api/user-monitoring', require('./routes/userMonitoring'));
@@ -47,7 +49,10 @@ io.on('connection', (socket) => {
   // Handle room joining
   socket.on('join', (room) => {
     socket.join(room);
-    console.log(`Socket ${socket.id} joined room: ${room}`);
+    // Reduced logging - only log chat joins, not post joins
+    if (room.startsWith('chat_') || room.startsWith('user_')) {
+      console.log(`Socket ${socket.id} joined room: ${room}`);
+    }
     socket.emit('joined', room);
   });
 
