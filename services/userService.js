@@ -26,7 +26,9 @@ exports.getById = async (id) => {
     `SELECT id, email, username, display_name, first_name, last_name, bio, about,
             profile_image, cover_image, location, website, preferences, social_links,
             phone, role, is_verified, created_at, updated_at, last_login_at,
-            follower_count, following_count, status
+            follower_count, following_count, status,
+            country, country_name, region, city, timezone, latitude, longitude,
+            location_last_updated
      FROM users WHERE id = $1`,
     [id]
   );

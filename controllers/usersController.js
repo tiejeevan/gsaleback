@@ -1,6 +1,8 @@
 // controllers/usersController.js
 const bcrypt = require('bcryptjs');
 const userService = require('../services/userService');
+const locationService = require('../services/locationService');
+const externalLocationService = require('../services/externalLocationService');
 
 // ✅ 1. Public profile by ID (viewable by others)
 exports.getPublicProfile = async (req, res) => {
@@ -18,9 +20,86 @@ exports.getPublicProfile = async (req, res) => {
 // ✅ 2. Get own profile (private info)
 exports.getMe = async (req, res) => {
   try {
-    const user = await userService.getById(req.user.id);
+    // Get client IP address
+    const ip = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'];
+    console.log('🔍 Detected IP address:', ip);
+    
+    // First, fetch current user to check if location needs updating
+    let user = await userService.getById(req.user.id);
     if (!user)
       return res.status(404).json({ success: false, message: 'User not found' });
+    
+    // Check if we need to update location:
+    // 1. No location data exists (city is null)
+    // 2. Location is older than 24 hours
+    // 3. IP address changed
+    const needsUpdate = !user.city || 
+                        !user.location_last_updated ||
+                        (new Date() - new Date(user.location_last_updated)) > 24 * 60 * 60 * 1000 ||
+                        user.ip_address !== ip;
+    
+    if (needsUpdate) {
+      console.log('🔄 Location needs update (missing, old, or IP changed)');
+      try {
+        const locationData = await externalLocationService.getLocationWithFallback(ip);
+        console.log('📍 Location data:', locationData);
+        
+        // Update database
+        const query = `
+          UPDATE users 
+          SET 
+            ip_address = $1,
+            country = $2,
+            country_name = $3,
+            region = $4,
+            city = $5,
+            timezone = $6,
+            latitude = $7,
+            longitude = $8,
+            location_last_updated = NOW()
+          WHERE id = $9
+        `;
+        
+        const pool = require('../db');
+        await pool.query(query, [
+          ip,
+          locationData.country,
+          locationData.country_name,
+          locationData.region,
+          locationData.city,
+          locationData.timezone,
+          locationData.latitude,
+          locationData.longitude,
+          req.user.id
+        ]);
+        
+        console.log('✅ Location updated successfully');
+        
+        // Fetch user again with updated location
+        user = await userService.getById(req.user.id);
+      } catch (err) {
+        console.error('❌ Error updating location:', err);
+        // Continue with existing location data
+      }
+    } else {
+      console.log('✓ Using cached location (updated recently)');
+    }
+    
+    // Add currency and language info based on country
+    if (user.country) {
+      const completeLocation = locationService.getCompleteLocationInfo(user.country, {
+        country: user.country,
+        country_name: user.country_name,
+        region: user.region,
+        city: user.city,
+        timezone: user.timezone,
+        latitude: user.latitude,
+        longitude: user.longitude,
+        location_last_updated: user.location_last_updated
+      });
+      user.location_info = completeLocation;
+    }
+    
     res.json({ success: true, user });
   } catch (err) {
     console.error('Error fetching self:', err);
