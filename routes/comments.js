@@ -46,6 +46,17 @@ const buildCommentsTree = (rows) => {
     }
   });
 
+  // Sort children by created_at DESC (newest first) recursively
+  const sortChildren = (comments) => {
+    comments.forEach(comment => {
+      if (comment.children && comment.children.length > 0) {
+        comment.children.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        sortChildren(comment.children);
+      }
+    });
+  };
+
+  sortChildren(roots);
   return roots;
 };
 
@@ -127,6 +138,8 @@ router.post('/', verifyToken, canWrite, upload.array('files', 10), async (req, r
       username: userInfo.username,
       first_name: userInfo.first_name,
       last_name: userInfo.last_name,
+      created_at: new Date(comment.created_at).toISOString(),
+      updated_at: new Date(comment.updated_at).toISOString(),
       children: [], // Initialize empty children array for nested structure
       like_count: 0, // New comment has no likes
       liked_by_user: false // Current user hasn't liked their own comment
@@ -190,13 +203,17 @@ router.get('/:postId', verifyToken, async (req, res) => {
       const { postId } = req.params;
       const userId = req.user.id;
   
-      // Fetch comments and user info ordered by path so replies are grouped
+      // Fetch comments ordered by newest first
       const commentsRes = await pool.query(
-        `SELECT c.*, u.username, u.first_name, u.last_name
+        `SELECT c.id, c.post_id, c.user_id, c.parent_comment_id, c.content, 
+                c.attachments, c.mentions, c.path, c.edit_count, c.is_deleted,
+                to_char(c.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS created_at,
+                to_char(c.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS updated_at,
+                u.username, u.first_name, u.last_name
          FROM comments c
          JOIN users u ON c.user_id = u.id
          WHERE c.post_id = $1 AND c.is_deleted = false
-         ORDER BY c.path ASC`,
+         ORDER BY c.created_at DESC`,
         [postId]
       );
   
@@ -297,6 +314,8 @@ router.put('/:id', verifyToken, canWrite, async (req, res) => {
       username: userInfo.username,
       first_name: userInfo.first_name,
       last_name: userInfo.last_name,
+      created_at: new Date(updated.rows[0].created_at).toISOString(),
+      updated_at: new Date(updated.rows[0].updated_at).toISOString(),
     };
 
     // =================== REAL-TIME EMIT ===================

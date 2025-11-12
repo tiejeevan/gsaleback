@@ -174,13 +174,29 @@ class PostsService {
       if (like.user_id === currentUserId) userLikedSet.add(like.post_id);
     });
 
+    // Fetch bookmarks
+    const bookmarksResult = await pool.query(
+      `SELECT post_id
+       FROM bookmarks
+       WHERE user_id = $1 AND post_id = ANY($2::int[])`,
+      [currentUserId, postIds]
+    );
+
+    const userBookmarkedSet = new Set();
+    bookmarksResult.rows.forEach(bookmark => {
+      userBookmarkedSet.add(bookmark.post_id);
+    });
+
     // Fetch comments
     const commentsResult = await pool.query(
-      `SELECT c.*, u.username, u.first_name, u.last_name, u.profile_image
+      `SELECT c.*, 
+              u.username, u.first_name, u.last_name, u.profile_image,
+              c.created_at AT TIME ZONE 'UTC' AS created_at,
+              c.updated_at AT TIME ZONE 'UTC' AS updated_at
        FROM comments c
        JOIN users u ON c.user_id = u.id
        WHERE c.post_id = ANY($1::int[]) AND c.is_deleted = false
-       ORDER BY c.path ASC`,
+       ORDER BY c.created_at DESC`,
       [postIds]
     );
 
@@ -189,6 +205,8 @@ class PostsService {
       user_id: Number(c.user_id),
       post_id: Number(c.post_id),
       parent_comment_id: c.parent_comment_id ? Number(c.parent_comment_id) : null,
+      created_at: new Date(c.created_at).toISOString(),
+      updated_at: new Date(c.updated_at).toISOString(),
       children: []
     }));
 
@@ -230,6 +248,7 @@ class PostsService {
       attachments: attachmentsMap.get(post.id) || [],
       likes: likesMap.get(post.id) || [],
       liked_by_user: userLikedSet.has(post.id),
+      bookmarked_by_user: userBookmarkedSet.has(post.id),
       like_count: (likesMap.get(post.id) || []).length,
       comments: commentsByPost.get(post.id) || []
     }));

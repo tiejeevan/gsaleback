@@ -10,14 +10,23 @@ router.get("/", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
     const result = await pool.query(
-      `SELECT n.*, u.username AS actor_name
+      `SELECT n.*, 
+              u.username AS actor_name,
+              n.created_at AT TIME ZONE 'UTC' AS created_at
        FROM notifications n
        LEFT JOIN users u ON n.actor_user_id = u.id
        WHERE n.recipient_user_id = $1 AND n.deleted_at IS NULL
        ORDER BY n.created_at DESC`,
       [userId]
     );
-    res.json(result.rows);
+    
+    // Ensure created_at is in ISO format
+    const notifications = result.rows.map(row => ({
+      ...row,
+      created_at: new Date(row.created_at).toISOString()
+    }));
+    
+    res.json(notifications);
   } catch (err) {
     console.error("Error fetching notifications:", err);
     res.status(500).json({ error: "Failed to fetch notifications" });
