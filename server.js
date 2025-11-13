@@ -3,6 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');
+const fetch = require('node-fetch');
 
 const uploadRoute = require("./routes/upload");
 const commentsRoute = require("./routes/comments");
@@ -99,6 +100,32 @@ io.on('connection', (socket) => {
 
 // Make io accessible in routes
 app.set('io', io);
+
+// Bot keep-alive functionality
+const BOT_URL = process.env.BOT_URL; // e.g., https://gsalebot.onrender.com
+const BOT_PING_INTERVAL = 5 * 60 * 1000; // 5 minutes
+
+async function pingBot() {
+  if (!BOT_URL) {
+    return; // Skip if BOT_URL not configured
+  }
+
+  try {
+    const response = await fetch(`${BOT_URL}/health`);
+    const data = await response.json();
+    console.log(`✅ Bot pinged successfully - Status: ${data.status}, Healthy: ${data.healthy}`);
+  } catch (error) {
+    console.log(`⚠️  Bot ping failed: ${error.message}`);
+  }
+}
+
+// Start bot ping interval if BOT_URL is configured
+if (BOT_URL) {
+  console.log(`🤖 Bot keep-alive enabled - Pinging ${BOT_URL} every 5 minutes`);
+  setInterval(pingBot, BOT_PING_INTERVAL);
+  // Ping immediately on startup
+  setTimeout(pingBot, 10000); // Wait 10 seconds after startup
+}
 
 // Start server
 const PORT = process.env.PORT || 5000;
