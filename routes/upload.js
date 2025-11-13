@@ -2,6 +2,7 @@
 const express = require("express");
 const multer = require("multer");
 const AWS = require("aws-sdk");
+const sharp = require("sharp");
 require("dotenv").config({ path: ".env" }); // ensure env variables are loaded
 
 const router = express.Router();
@@ -30,21 +31,43 @@ router.post("/", upload.array("files", 10), async (req, res) => {
 
     // Upload each file to R2
     for (let file of req.files) {
+      let fileBuffer = file.buffer;
+      let contentType = file.mimetype;
+
+      // Compress images using Sharp
+      if (file.mimetype.startsWith('image/')) {
+        try {
+          fileBuffer = await sharp(file.buffer)
+            .resize(1200, 1200, { 
+              fit: 'inside', 
+              withoutEnlargement: true 
+            })
+            .jpeg({ quality: 85 })
+            .toBuffer();
+          
+          contentType = 'image/jpeg';
+        } catch (err) {
+          console.error('❌ Sharp compression failed, using original:', err.message);
+          // If compression fails, use original file
+        }
+      }
+
       const key = `${Date.now()}-${file.originalname.replace(/\s+/g, "_")}`;
 
       const params = {
         Bucket: process.env.R2_BUCKET_NAME,
         Key: key,
-        Body: file.buffer,
-        ContentType: file.mimetype,
+        Body: fileBuffer,
+        ContentType: contentType,
         ACL: "public-read", // optional, if bucket is public
       };
 
       await s3.upload(params).promise();
 
+      // Return just the key (filename), not the full internal URL
       uploadedFiles.push({
         originalName: file.originalname,
-        url: `${process.env.R2_ENDPOINT}/${process.env.R2_BUCKET_NAME}/${key}`,
+        url: key, // Just the filename, frontend will add public URL
       });
     }
 
