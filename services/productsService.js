@@ -94,7 +94,10 @@ class ProductsService {
       await client.query('COMMIT');
 
       // Fetch complete product with relations
-      return await this.getProductById(product.id);
+      const completeProduct = await this.getProductById(product.id);
+      
+      // Return product with userId for notification creation
+      return { ...completeProduct, userId };
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;

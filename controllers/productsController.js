@@ -29,6 +29,45 @@ class ProductsController {
 
       const product = await productsService.createProduct(productData);
 
+      // If product is pending approval, notify all admins
+      if (product.status === 'pending') {
+        const pool = require('../db');
+        const io = req.app.get('io');
+        
+        // Get all admin users
+        const adminsResult = await pool.query(
+          `SELECT id FROM users WHERE role = 'admin'`
+        );
+        
+        // Create notifications for each admin
+        for (const admin of adminsResult.rows) {
+          const notificationResult = await pool.query(
+            `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
+             VALUES ($1, $2, $3, $4)
+             RETURNING *`,
+            [
+              admin.id,
+              userId,
+              'product_approval',
+              JSON.stringify({
+                productId: product.id,
+                productTitle: product.title,
+                productImage: product.images?.[0] || null
+              })
+            ]
+          );
+          
+          // Emit real-time notification to admin
+          if (io) {
+            io.to(`user_${admin.id}`).emit('notification:new', {
+              ...notificationResult.rows[0],
+              actor_user_id: userId,
+              type: 'product_approval'
+            });
+          }
+        }
+      }
+
       res.status(201).json({
         success: true,
         message: 'Product created successfully',
@@ -528,6 +567,34 @@ class ProductsController {
 
       const product = await productsService.approveProduct(id, adminId);
 
+      // Notify product owner about approval
+      const pool = require('../db');
+      const io = req.app.get('io');
+      
+      const notificationResult = await pool.query(
+        `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [
+          product.created_by,
+          adminId,
+          'product_approved',
+          JSON.stringify({
+            productId: product.id,
+            productTitle: product.title
+          })
+        ]
+      );
+      
+      // Emit real-time notification to product owner
+      if (io) {
+        io.to(`user_${product.created_by}`).emit('notification:new', {
+          ...notificationResult.rows[0],
+          actor_user_id: adminId,
+          type: 'product_approved'
+        });
+      }
+
       res.json({
         success: true,
         message: 'Product approved successfully',
@@ -555,8 +622,38 @@ class ProductsController {
     try {
       const { id } = req.params;
       const adminId = req.user.id;
+      const { reason } = req.body;
 
       const product = await productsService.rejectProduct(id, adminId);
+
+      // Notify product owner about rejection
+      const pool = require('../db');
+      const io = req.app.get('io');
+      
+      const notificationResult = await pool.query(
+        `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
+         VALUES ($1, $2, $3, $4)
+         RETURNING *`,
+        [
+          product.created_by,
+          adminId,
+          'product_rejected',
+          JSON.stringify({
+            productId: product.id,
+            productTitle: product.title,
+            reason: reason || 'No reason provided'
+          })
+        ]
+      );
+      
+      // Emit real-time notification to product owner
+      if (io) {
+        io.to(`user_${product.created_by}`).emit('notification:new', {
+          ...notificationResult.rows[0],
+          actor_user_id: adminId,
+          type: 'product_rejected'
+        });
+      }
 
       res.json({
         success: true,
