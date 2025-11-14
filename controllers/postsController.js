@@ -67,6 +67,9 @@ class PostsController {
         post.attachments = [];
       }
 
+      // Enrich post with user details and other data
+      const enrichedPost = await postsService.getPostById(post.id, userId);
+
       // Send notifications to mentioned users
       console.log('📝 Mentions received:', mentionsArray);
       if (mentionsArray && mentionsArray.length > 0) {
@@ -142,7 +145,7 @@ class PostsController {
         userAgent: req.get('User-Agent')
       });
 
-      res.status(201).json(post);
+      res.status(201).json(enrichedPost);
     } catch (err) {
       console.error('Error creating post:', err);
       res.status(500).json({ error: 'Failed to create post', details: err.message });
