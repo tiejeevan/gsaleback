@@ -88,6 +88,26 @@ exports.addLike = async (req, res) => {
       io.to(`post_${target_id}`).emit(eventName, eventData);
     }
 
+    // Award XP for likes (gamification)
+    if (isNewLike && req.gamificationEnabled) {
+      try {
+        const xpService = require('../services/xpService');
+        const io = req.app.get('io');
+        // Award XP to liker
+        await xpService.awardXP(userId, 'like_given', target_id, { target_type }, io);
+        
+        // Award XP to post owner (if different user)
+        if (target_type === 'post') {
+          const postOwner = await pool.query('SELECT user_id FROM posts WHERE id = $1', [target_id]);
+          if (postOwner.rows.length > 0 && postOwner.rows[0].user_id !== userId) {
+            await xpService.awardXP(postOwner.rows[0].user_id, 'like_received', target_id, { target_type }, io);
+          }
+        }
+      } catch (gamErr) {
+        console.error('Gamification error (non-blocking):', gamErr);
+      }
+    }
+
     res.status(201).json({ success: true, like: result.rows[0] });
   } catch (err) {
     console.error('Error adding like:', err);

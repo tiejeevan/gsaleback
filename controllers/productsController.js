@@ -68,6 +68,19 @@ class ProductsController {
         }
       }
 
+      // Award XP for product creation (gamification)
+      if (req.gamificationEnabled) {
+        try {
+          const xpService = require('../services/xpService');
+          const badgeService = require('../services/badgeService');
+          const io = req.app.get('io');
+          await xpService.awardXP(userId, 'product_created', product.id, {}, io);
+          await badgeService.checkAndAwardBadges(userId, io);
+        } catch (gamErr) {
+          console.error('Gamification error (non-blocking):', gamErr);
+        }
+      }
+
       res.status(201).json({
         success: true,
         message: 'Product created successfully',

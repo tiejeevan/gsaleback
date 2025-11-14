@@ -59,6 +59,20 @@ exports.followUser = async (req, res) => {
       // Don't fail the request if notification fails
     }
 
+    // Award XP for follows (gamification)
+    if (req.gamificationEnabled) {
+      try {
+        const xpService = require('../services/xpService');
+        const io = req.app.get('io');
+        // Award XP to follower
+        await xpService.awardXP(followerId, 'follow_given', followingId, {}, io);
+        // Award XP to followed user
+        await xpService.awardXP(followingId, 'follower_received', followerId, {}, io);
+      } catch (gamErr) {
+        console.error('Gamification error (non-blocking):', gamErr);
+      }
+    }
+
     res.status(201).json({
       success: true,
       message: 'Successfully followed user',

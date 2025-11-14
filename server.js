@@ -18,6 +18,10 @@ app.set('trust proxy', true);
 app.use(cors());
 app.use(express.json());
 
+// Gamification middleware (checks if gamification is enabled)
+const gamificationMiddleware = require('./middleware/gamificationMiddleware');
+app.use(gamificationMiddleware);
+
 // Routes
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/posts', require('./routes/posts'));
@@ -40,6 +44,8 @@ app.use('/api/orders', require('./routes/orders'));
 app.use('/api/addresses', require('./routes/addresses'));
 app.use('/api/system-settings', require('./routes/systemSettings'));
 app.use('/api/search', require('./routes/search'));
+app.use('/api/gamification', require('./routes/gamification'));
+app.use('/api/admin/gamification', require('./routes/adminGamification'));
 
 // Wrap express app in http server
 const server = http.createServer(app);
@@ -101,6 +107,10 @@ io.on('connection', (socket) => {
 
 // Make io accessible in routes
 app.set('io', io);
+
+// Start gamification cron jobs
+const gamificationCron = require('./services/gamificationCron');
+gamificationCron.start();
 
 // Bot keep-alive functionality
 const BOT_URL = process.env.BOT_URL; // e.g., https://gsalebot.onrender.com

@@ -142,6 +142,25 @@ class PostsController {
         userAgent: req.get('User-Agent')
       });
 
+      // Award XP for post creation (gamification)
+      console.log('🎮 Post created, checking gamification. Enabled:', req.gamificationEnabled);
+      if (req.gamificationEnabled) {
+        try {
+          const xpService = require('../services/xpService');
+          const badgeService = require('../services/badgeService');
+          const io = req.app.get('io');
+          console.log('🎮 Gamification enabled, io available:', !!io);
+          console.log('🎮 Awarding XP for post creation to user:', userId);
+          const xpResult = await xpService.awardXP(userId, 'post_created', post.id, {}, io);
+          console.log('🎮 XP award result:', xpResult);
+          await badgeService.checkAndAwardBadges(userId, io);
+        } catch (gamErr) {
+          console.error('Gamification error (non-blocking):', gamErr);
+        }
+      } else {
+        console.log('⚠️ Gamification is DISABLED');
+      }
+
       res.status(201).json(post);
     } catch (err) {
       console.error('Error creating post:', err);
