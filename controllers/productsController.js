@@ -95,6 +95,7 @@ class ProductsController {
         category_id: req.query.category_id,
         owner_type: req.query.owner_type,
         owner_id: req.query.owner_id,
+        created_by: req.query.created_by,
         search: req.query.search,
         min_price: req.query.min_price,
         max_price: req.query.max_price,

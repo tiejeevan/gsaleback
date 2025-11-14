@@ -170,6 +170,7 @@ class ProductsService {
       category_id,
       owner_type,
       owner_id,
+      created_by,
       is_featured,
       search,
       min_price,
@@ -214,6 +215,12 @@ class ProductsService {
       paramCount++;
       conditions.push(`p.owner_id = $${paramCount}`);
       params.push(owner_id);
+    }
+
+    if (created_by) {
+      paramCount++;
+      conditions.push(`p.created_by = $${paramCount}`);
+      params.push(created_by);
     }
 
     if (is_featured !== undefined) {
