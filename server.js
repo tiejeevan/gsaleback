@@ -39,6 +39,7 @@ app.use('/api/cart', require('./routes/cart'));
 app.use('/api/orders', require('./routes/orders'));
 app.use('/api/addresses', require('./routes/addresses'));
 app.use('/api/system-settings', require('./routes/systemSettings'));
+app.use('/api/search', require('./routes/search'));
 
 // Wrap express app in http server
 const server = http.createServer(app);

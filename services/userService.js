@@ -61,45 +61,115 @@ exports.update = async (id, data) => {
 
 // 🟢 Search users for mentions (autocomplete)
 exports.searchForMentions = async (query, currentUserId, limit = 10) => {
+  const Fuse = require('fuse.js');
+  
+  // Get all active users except current user
   const { rows } = await pool.query(
-    `SELECT id, username, display_name, profile_image, first_name, last_name
+    `SELECT id, username, display_name, profile_image, first_name, last_name, follower_count
      FROM users
-     WHERE (username ILIKE $1 OR display_name ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-       AND is_active = true 
+     WHERE is_active = true 
        AND deleted_at IS NULL
-       AND id != $2
-     ORDER BY 
-       CASE 
-         WHEN username ILIKE $1 THEN 1
-         WHEN display_name ILIKE $1 THEN 2
-         ELSE 3
-       END,
-       follower_count DESC NULLS LAST
-     LIMIT $3`,
-    [`${query}%`, currentUserId, limit]
+       AND id != $1`,
+    [currentUserId]
   );
-  return rows;
+
+  // Configure Fuse.js for fuzzy search (more strict for mentions)
+  const fuse = new Fuse(rows, {
+    keys: [
+      { name: 'username', weight: 2.5 },
+      { name: 'display_name', weight: 2 },
+      { name: 'first_name', weight: 1.5 },
+      { name: 'last_name', weight: 1.5 }
+    ],
+    threshold: 0.3,
+    includeScore: true,
+    ignoreLocation: true,
+    minMatchCharLength: 1,
+  });
+
+  // Perform fuzzy search
+  const results = fuse.search(query);
+  
+  // Return top results
+  return results.slice(0, limit).map(result => result.item);
 };
 
 // 🟢 Search active users (general search)
 exports.searchActiveUsers = async (query, currentUserId, limit = 20) => {
+  const Fuse = require('fuse.js');
+  
+  // Get all active users except current user
   const { rows } = await pool.query(
     `SELECT id, username, display_name, profile_image, first_name, last_name, bio, follower_count
      FROM users
-     WHERE (username ILIKE $1 OR display_name ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1)
-       AND is_active = true 
+     WHERE is_active = true 
        AND deleted_at IS NULL
-       AND id != $2
-     ORDER BY 
-       CASE 
-         WHEN username ILIKE $3 THEN 1
-         WHEN display_name ILIKE $3 THEN 2
-         WHEN first_name ILIKE $3 THEN 3
-         ELSE 4
-       END,
-       follower_count DESC NULLS LAST
-     LIMIT $4`,
-    [`%${query}%`, currentUserId, `${query}%`, limit]
+       AND id != $1`,
+    [currentUserId]
   );
-  return rows;
+
+  // Configure Fuse.js for fuzzy search
+  const fuse = new Fuse(rows, {
+    keys: [
+      { name: 'username', weight: 2 },
+      { name: 'display_name', weight: 1.8 },
+      { name: 'first_name', weight: 1.5 },
+      { name: 'last_name', weight: 1.5 },
+      { name: 'bio', weight: 0.5 }
+    ],
+    threshold: 0.4,
+    includeScore: true,
+    ignoreLocation: true,
+    minMatchCharLength: 2,
+  });
+
+  // Perform fuzzy search
+  const results = fuse.search(query);
+  
+  // Return top results with score
+  return results.slice(0, limit).map(result => ({
+    ...result.item,
+    searchScore: result.score
+  }));
+};
+
+// 🟢 Get user search suggestions (typeahead)
+exports.getUserSuggestions = async (query, currentUserId, limit = 5) => {
+  const Fuse = require('fuse.js');
+  
+  // Get all active users except current user
+  const { rows } = await pool.query(
+    `SELECT id, username, display_name, profile_image, first_name, last_name, follower_count
+     FROM users
+     WHERE is_active = true 
+       AND deleted_at IS NULL
+       AND id != $1`,
+    [currentUserId]
+  );
+
+  // Configure Fuse.js for fuzzy search
+  const fuse = new Fuse(rows, {
+    keys: [
+      { name: 'username', weight: 2 },
+      { name: 'display_name', weight: 1.8 },
+      { name: 'first_name', weight: 1.5 },
+      { name: 'last_name', weight: 1.5 }
+    ],
+    threshold: 0.4,
+    includeScore: true,
+    ignoreLocation: true,
+    minMatchCharLength: 2,
+  });
+
+  // Perform fuzzy search
+  const results = fuse.search(query);
+  
+  // Get total count
+  const count = results.length;
+  
+  // Return limited suggestions with count
+  return {
+    suggestions: results.slice(0, limit).map(result => result.item),
+    count
+  };
 };

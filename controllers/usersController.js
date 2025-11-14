@@ -190,3 +190,25 @@ exports.searchActiveUsers = async (req, res) => {
     res.status(500).json({ success: false, message: 'Server error' });
   }
 };
+
+// ✅ 8. Get user search suggestions (typeahead)
+exports.getUserSuggestions = async (req, res) => {
+  try {
+    const { q, limit } = req.query;
+    
+    if (!q || q.trim().length < 2) {
+      return res.json({ success: true, suggestions: [], count: 0 });
+    }
+    
+    const result = await userService.getUserSuggestions(
+      q.trim(), 
+      req.user.id, 
+      limit ? parseInt(limit) : 5
+    );
+    
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('Error getting user suggestions:', err);
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
+};
