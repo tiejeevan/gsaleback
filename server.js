@@ -4,6 +4,7 @@ const dotenv = require('dotenv');
 const http = require('http');
 const { Server } = require('socket.io');
 const fetch = require('node-fetch');
+const compression = require('compression');
 
 const uploadRoute = require("./routes/upload");
 const commentsRoute = require("./routes/comments");
@@ -15,6 +16,7 @@ const app = express();
 app.set('trust proxy', true);
 
 // Middleware
+app.use(compression()); // Enable gzip compression for all responses
 app.use(cors());
 app.use(express.json());
 
