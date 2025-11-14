@@ -25,6 +25,7 @@ exports.getChatMessages = async (req, res) => {
                 m.*,
                 u.username,
                 u.profile_image as avatar_url,
+                u.profile_image as sender_profile_image,
                 json_agg(
                     json_build_object(
                         'id', ma.id,
@@ -115,6 +116,7 @@ exports.sendMessage = async (req, res) => {
             ...message,
             username: userInfo.rows[0].username,
             avatar_url: userInfo.rows[0].profile_image,
+            sender_profile_image: userInfo.rows[0].profile_image,
             reactions: []
         };
 
