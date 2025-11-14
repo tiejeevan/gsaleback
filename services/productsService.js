@@ -117,7 +117,11 @@ class ProductsService {
         p.*,
         c.name as category_name,
         c.slug as category_slug,
-        u.username as creator_username,
+        u.id as user_id,
+        u.username as user_username,
+        u.first_name as user_first_name,
+        u.last_name as user_last_name,
+        u.profile_image as user_profile_image,
         u.display_name as creator_display_name,
         COALESCE(
           json_agg(
@@ -148,7 +152,7 @@ class ProductsService {
       LEFT JOIN users u ON p.created_by = u.id
       LEFT JOIN product_attributes pa ON p.id = pa.product_id
       WHERE p.id = $1 ${deletedCondition}
-      GROUP BY p.id, c.name, c.slug, u.username, u.display_name`,
+      GROUP BY p.id, c.name, c.slug, u.id, u.username, u.first_name, u.last_name, u.profile_image, u.display_name`,
       [productId]
     );
 
@@ -268,6 +272,11 @@ class ProductsService {
         p.*,
         c.name as category_name,
         c.slug as category_slug,
+        u.id as user_id,
+        u.username as user_username,
+        u.first_name as user_first_name,
+        u.last_name as user_last_name,
+        u.profile_image as user_profile_image,
         COALESCE(
           json_agg(
             DISTINCT jsonb_build_object(
@@ -280,9 +289,10 @@ class ProductsService {
         ) as primary_media
       FROM products p
       LEFT JOIN categories c ON p.category_id = c.id
+      LEFT JOIN users u ON p.created_by = u.id
       LEFT JOIN product_media pm ON p.id = pm.product_id
       WHERE ${whereClause}
-      GROUP BY p.id, c.name, c.slug
+      GROUP BY p.id, c.name, c.slug, u.id, u.username, u.first_name, u.last_name, u.profile_image
       ORDER BY p.${sortColumn} ${sortDirection}
       LIMIT $${paramCount + 1} OFFSET $${paramCount + 2}`,
       params

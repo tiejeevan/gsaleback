@@ -13,15 +13,15 @@ const s3 = new AWS.S3({
 
 class PostsService {
   // Create a new post
-  async createPost({ userId, content, title, postType, visibility, tags, mentions, location, metadata, scheduledAt, commentsEnabled }) {
+  async createPost({ userId, content, title, postType, visibility, tags, mentions, location, metadata, scheduledAt, commentsEnabled, sharedProductId }) {
     const status = scheduledAt ? 'scheduled' : 'published';
     
     const result = await pool.query(
       `INSERT INTO posts (
         user_id, content, title, post_type, visibility, tags, mentions, 
-        location, metadata, scheduled_at, status, comments_enabled
+        location, metadata, scheduled_at, status, comments_enabled, shared_product_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
       RETURNING *`,
       [
         userId,
@@ -35,7 +35,8 @@ class PostsService {
         metadata ? JSON.stringify(metadata) : '{}',
         scheduledAt || null,
         status,
-        commentsEnabled !== undefined ? commentsEnabled : true
+        commentsEnabled !== undefined ? commentsEnabled : true,
+        sharedProductId || null
       ]
     );
 
@@ -73,9 +74,13 @@ class PostsService {
   // Get all posts with full details
   async getAllPosts(currentUserId, limit = 20, offset = 0) {
     const postsResult = await pool.query(
-      `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image
+      `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image,
+              prod.id as product_id, prod.title as product_title, prod.price as product_price,
+              prod.images as product_images, prod.stock_quantity as product_stock,
+              prod.slug as product_slug
        FROM posts p
        JOIN users u ON p.user_id = u.id
+       LEFT JOIN products prod ON p.shared_product_id = prod.id AND prod.deleted_at IS NULL
        WHERE p.is_deleted = false AND p.status = 'published' AND p.visibility = 'public'
        ORDER BY p.created_at DESC
        LIMIT $1 OFFSET $2`,
@@ -103,9 +108,13 @@ class PostsService {
   // Get posts by user ID
   async getPostsByUserId(userId, currentUserId) {
     const postsResult = await pool.query(
-      `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image
+      `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image,
+              prod.id as product_id, prod.title as product_title, prod.price as product_price,
+              prod.images as product_images, prod.stock_quantity as product_stock,
+              prod.slug as product_slug
        FROM posts p
        JOIN users u ON p.user_id = u.id
+       LEFT JOIN products prod ON p.shared_product_id = prod.id AND prod.deleted_at IS NULL
        WHERE p.user_id = $1 AND p.is_deleted = false AND p.status = 'published'
        ORDER BY p.created_at DESC`,
       [userId]
@@ -118,9 +127,13 @@ class PostsService {
   // Get single post by ID
   async getPostById(postId, currentUserId) {
     const postResult = await pool.query(
-      `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image
+      `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image,
+              prod.id as product_id, prod.title as product_title, prod.price as product_price,
+              prod.images as product_images, prod.stock_quantity as product_stock,
+              prod.slug as product_slug
        FROM posts p
        JOIN users u ON p.user_id = u.id
+       LEFT JOIN products prod ON p.shared_product_id = prod.id AND prod.deleted_at IS NULL
        WHERE p.id = $1 AND p.is_deleted = false`,
       [postId]
     );
@@ -243,15 +256,41 @@ class PostsService {
     });
 
     // Assemble final posts
-    return posts.map(post => ({
-      ...post,
-      attachments: attachmentsMap.get(post.id) || [],
-      likes: likesMap.get(post.id) || [],
-      liked_by_user: userLikedSet.has(post.id),
-      bookmarked_by_user: userBookmarkedSet.has(post.id),
-      like_count: (likesMap.get(post.id) || []).length,
-      comments: commentsByPost.get(post.id) || []
-    }));
+    return posts.map(post => {
+      const enrichedPost = {
+        ...post,
+        attachments: attachmentsMap.get(post.id) || [],
+        likes: likesMap.get(post.id) || [],
+        liked_by_user: userLikedSet.has(post.id),
+        bookmarked_by_user: userBookmarkedSet.has(post.id),
+        like_count: (likesMap.get(post.id) || []).length,
+        comments: commentsByPost.get(post.id) || []
+      };
+
+      // Add shared product data if exists
+      if (post.product_id) {
+        enrichedPost.shared_product = {
+          id: post.product_id,
+          title: post.product_title,
+          price: post.product_price,
+          images: post.product_images,
+          stock_quantity: post.product_stock,
+          slug: post.product_slug,
+          in_stock: post.product_stock > 0,
+          url: `/market/product/${post.product_id}`
+        };
+      }
+
+      // Clean up product fields from main post object
+      delete enrichedPost.product_id;
+      delete enrichedPost.product_title;
+      delete enrichedPost.product_price;
+      delete enrichedPost.product_images;
+      delete enrichedPost.product_stock;
+      delete enrichedPost.product_slug;
+
+      return enrichedPost;
+    });
   }
 
   // Build nested comment tree

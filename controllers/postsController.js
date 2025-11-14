@@ -15,7 +15,8 @@ class PostsController {
       location, 
       metadata, 
       scheduled_at,
-      comments_enabled 
+      comments_enabled,
+      shared_product_id
     } = req.body;
     
     const userId = req.user.id;
@@ -55,7 +56,8 @@ class PostsController {
         location,
         metadata,
         scheduledAt: scheduled_at,
-        commentsEnabled: comments_enabled
+        commentsEnabled: comments_enabled,
+        sharedProductId: shared_product_id
       });
 
       // Upload attachments if any
