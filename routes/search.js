@@ -7,8 +7,9 @@ const authMiddleware = require('../middleware/authMiddleware');
 /**
  * Search products with Fuse.js (fuzzy search)
  * GET /api/search/products?q=query&category_id=1&limit=10
+ * PUBLIC - No authentication required
  */
-router.get('/products', authMiddleware, async (req, res) => {
+router.get('/products', async (req, res) => {
   try {
     const { q, category_id, min_price, max_price, limit = 10 } = req.query;
 
@@ -50,8 +51,9 @@ router.get('/products', authMiddleware, async (req, res) => {
 /**
  * Get search suggestions (typeahead/autocomplete)
  * GET /api/search/suggestions?q=query&limit=5
+ * PUBLIC - No authentication required
  */
-router.get('/suggestions', authMiddleware, async (req, res) => {
+router.get('/suggestions', async (req, res) => {
   try {
     const { q, limit = 5 } = req.query;
 
