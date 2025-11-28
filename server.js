@@ -42,6 +42,8 @@ app.use('/api/orders', require('./routes/orders'));
 app.use('/api/addresses', require('./routes/addresses'));
 app.use('/api/system-settings', require('./routes/systemSettings'));
 app.use('/api/search', require('./routes/search'));
+app.use('/api/transactions', require('./routes/transactions'));
+app.use('/api/reviews', require('./routes/reviews'));
 
 // Wrap express app in http server
 const server = http.createServer(app);
