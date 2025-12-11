@@ -77,7 +77,7 @@ class OrderService {
           [
             order.id,
             item.product_id,
-            item.product_title,
+            item.product_name || item.product_title,
             item.product_slug,
             null, // SKU would come from product if needed
             item.product_images ? item.product_images[0] : null,

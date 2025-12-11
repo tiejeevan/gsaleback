@@ -15,7 +15,7 @@ router.get("/", verifyToken, async (req, res) => {
               n.created_at AT TIME ZONE 'UTC' AS created_at
        FROM notifications n
        LEFT JOIN users u ON n.actor_user_id = u.id
-       WHERE n.recipient_user_id = $1 AND n.deleted_at IS NULL
+       WHERE n.recipient_user_id = $1
        ORDER BY n.created_at DESC`,
       [userId]
     );
@@ -55,19 +55,13 @@ router.put("/:id/read", verifyToken, async (req, res) => {
     
     // Mark as read
     await pool.query(
-      `UPDATE notifications SET is_read = true 
+      `UPDATE notifications SET read = true 
        WHERE id = $1 AND recipient_user_id = $2`,
       [id, userId]
     );
     
-    // If it's a mention notification, soft delete it and the mention record
+    // If it's a mention notification, handle mention record
     if (notification.type === 'mention') {
-      await pool.query(
-        `UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP 
-         WHERE id = $1`,
-        [id]
-      );
-      
       // Also soft delete the mention record
       const commentId = notification.payload?.commentId;
       if (commentId) {
@@ -95,8 +89,8 @@ router.put("/read-all", verifyToken, async (req, res) => {
   try {
     const userId = req.user.id;
     await pool.query(
-      `UPDATE notifications SET is_read = true 
-       WHERE recipient_user_id = $1 AND is_read = false`,
+      `UPDATE notifications SET read = true 
+       WHERE recipient_user_id = $1 AND read = false`,
       [userId]
     );
     res.json({ success: true });
@@ -119,7 +113,7 @@ router.post("/", verifyToken, async (req, res) => {
       `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
        VALUES ($1, $2, $3, $4)
        RETURNING *`,
-      [recipient_user_id, actor_user_id, type, payload]
+      [recipient_user_id, actor_user_id, type, JSON.stringify(payload)]
     );
 
     const notif = result.rows[0];
@@ -157,10 +151,9 @@ router.delete("/:id", verifyToken, async (req, res) => {
     
     const notification = notifResult.rows[0];
     
-    // Soft delete the notification
+    // Delete the notification
     await pool.query(
-      `UPDATE notifications SET deleted_at = CURRENT_TIMESTAMP 
-       WHERE id = $1 AND recipient_user_id = $2`,
+      `DELETE FROM notifications WHERE id = $1 AND recipient_user_id = $2`,
       [id, userId]
     );
     

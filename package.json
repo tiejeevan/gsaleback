@@ -16,11 +16,13 @@
   "type": "commonjs",
   "dependencies": {
     "aws-sdk": "^2.1692.0",
+    "axios": "^1.13.2",
     "bcryptjs": "^3.0.2",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.1.0",
+    "form-data": "^4.0.5",
     "fuse.js": "^7.1.0",
     "geoip-lite": "^1.4.10",
     "jsonwebtoken": "^9.0.2",

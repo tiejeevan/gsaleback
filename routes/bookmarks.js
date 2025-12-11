@@ -32,8 +32,8 @@ router.post("/", authenticateToken, async (req, res) => {
     }
 
     const result = await pool.query(
-      "INSERT INTO bookmarks (user_id, item_type, item_id, post_id) VALUES ($1, $2, $3, $4) RETURNING *",
-      [user_id, type, id, type === 'post' ? id : null]
+      "INSERT INTO bookmarks (user_id, item_type, item_id) VALUES ($1, $2, $3) RETURNING *",
+      [user_id, type, id]
     );
 
     res.json({ message: `${type.charAt(0).toUpperCase() + type.slice(1)} bookmarked`, bookmark: result.rows[0] });

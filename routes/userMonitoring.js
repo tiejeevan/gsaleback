@@ -155,7 +155,7 @@ router.get('/:userId/posts', async (req, res) => {
             SELECT 
                 p.id, p.content, p.image_url, p.created_at, p.updated_at,
                 p.is_deleted, p.deleted_at,
-                (SELECT COUNT(*) FROM likes WHERE post_id = p.id) as likes_count,
+                (SELECT COUNT(*) FROM likes WHERE target_type = 'post' AND target_id = p.id) as likes_count,
                 (SELECT COUNT(*) FROM comments WHERE post_id = p.id AND (is_deleted = FALSE OR is_deleted IS NULL)) as comments_count
             FROM posts p
             WHERE p.user_id = $1

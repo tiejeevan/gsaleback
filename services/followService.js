@@ -12,7 +12,7 @@ exports.followUser = async (followerId, followingId) => {
 
   // Check if already following
   const existingFollow = await pool.query(
-    'SELECT id FROM user_follows WHERE follower_id = $1 AND following_id = $2',
+    'SELECT id FROM follows WHERE follower_id = $1 AND following_id = $2',
     [followerId, followingId]
   );
 
@@ -22,7 +22,7 @@ exports.followUser = async (followerId, followingId) => {
 
   // Check if the user to follow exists and is active
   const userCheck = await pool.query(
-    'SELECT id FROM users WHERE id = $1 AND is_active = true AND deleted_at IS NULL',
+    'SELECT id FROM users WHERE id = $1 AND is_active = true AND is_deleted = false',
     [followingId]
   );
 
@@ -32,7 +32,7 @@ exports.followUser = async (followerId, followingId) => {
 
   // Create follow relationship
   const { rows } = await pool.query(
-    `INSERT INTO user_follows (follower_id, following_id)
+    `INSERT INTO follows (follower_id, following_id)
      VALUES ($1, $2)
      RETURNING id, follower_id, following_id, created_at`,
     [followerId, followingId]
@@ -46,7 +46,7 @@ exports.followUser = async (followerId, followingId) => {
  */
 exports.unfollowUser = async (followerId, followingId) => {
   const { rows } = await pool.query(
-    `DELETE FROM user_follows 
+    `DELETE FROM follows 
      WHERE follower_id = $1 AND following_id = $2
      RETURNING id`,
     [followerId, followingId]
@@ -64,7 +64,7 @@ exports.unfollowUser = async (followerId, followingId) => {
  */
 exports.isFollowing = async (followerId, followingId) => {
   const { rows } = await pool.query(
-    'SELECT id FROM user_follows WHERE follower_id = $1 AND following_id = $2',
+    'SELECT id FROM follows WHERE follower_id = $1 AND following_id = $2',
     [followerId, followingId]
   );
 
@@ -85,13 +85,13 @@ exports.getFollowers = async (userId, limit = 50, offset = 0) => {
       u.profile_image,
       u.bio,
       u.is_verified,
-      u.follower_count,
+      u.followers_count,
       u.following_count
-     FROM user_follows uf
+     FROM follows uf
      JOIN users u ON uf.follower_id = u.id
      WHERE uf.following_id = $1 
        AND u.is_active = true 
-       AND u.deleted_at IS NULL
+       AND u.is_deleted = false
      ORDER BY uf.created_at DESC
      LIMIT $2 OFFSET $3`,
     [userId, limit, offset]
@@ -100,11 +100,11 @@ exports.getFollowers = async (userId, limit = 50, offset = 0) => {
   // Get total count
   const countResult = await pool.query(
     `SELECT COUNT(*) as total
-     FROM user_follows uf
+     FROM follows uf
      JOIN users u ON uf.follower_id = u.id
      WHERE uf.following_id = $1 
        AND u.is_active = true 
-       AND u.deleted_at IS NULL`,
+       AND u.is_deleted = false`,
     [userId]
   );
 
@@ -130,13 +130,13 @@ exports.getFollowing = async (userId, limit = 50, offset = 0) => {
       u.profile_image,
       u.bio,
       u.is_verified,
-      u.follower_count,
+      u.followers_count,
       u.following_count
-     FROM user_follows uf
+     FROM follows uf
      JOIN users u ON uf.following_id = u.id
      WHERE uf.follower_id = $1 
        AND u.is_active = true 
-       AND u.deleted_at IS NULL
+       AND u.is_deleted = false
      ORDER BY uf.created_at DESC
      LIMIT $2 OFFSET $3`,
     [userId, limit, offset]
@@ -145,11 +145,11 @@ exports.getFollowing = async (userId, limit = 50, offset = 0) => {
   // Get total count
   const countResult = await pool.query(
     `SELECT COUNT(*) as total
-     FROM user_follows uf
+     FROM follows uf
      JOIN users u ON uf.following_id = u.id
      WHERE uf.follower_id = $1 
        AND u.is_active = true 
-       AND u.deleted_at IS NULL`,
+       AND u.is_deleted = false`,
     [userId]
   );
 
@@ -167,7 +167,7 @@ exports.getFollowing = async (userId, limit = 50, offset = 0) => {
 exports.getFollowStats = async (userId) => {
   const { rows } = await pool.query(
     `SELECT 
-      follower_count,
+      followers_count as follower_count,
       following_count
      FROM users
      WHERE id = $1`,
@@ -193,21 +193,21 @@ exports.getMutualFollows = async (userId, limit = 50, offset = 0) => {
       u.profile_image,
       u.bio,
       u.is_verified,
-      u.follower_count,
+      u.followers_count as follower_count,
       u.following_count
      FROM users u
      WHERE u.id IN (
        SELECT uf1.following_id
-       FROM user_follows uf1
+       FROM follows uf1
        WHERE uf1.follower_id = $1
        AND EXISTS (
-         SELECT 1 FROM user_follows uf2
+         SELECT 1 FROM follows uf2
          WHERE uf2.follower_id = uf1.following_id
          AND uf2.following_id = $1
        )
      )
      AND u.is_active = true 
-     AND u.deleted_at IS NULL
+     AND u.is_deleted = false
      ORDER BY u.username
      LIMIT $2 OFFSET $3`,
     [userId, limit, offset]
@@ -228,15 +228,15 @@ exports.getFollowSuggestions = async (userId, limit = 10) => {
       u.profile_image,
       u.bio,
       u.is_verified,
-      u.follower_count,
+      u.followers_count as follower_count,
       u.following_count
      FROM users u
      WHERE u.id != $1
        AND u.is_active = true 
-       AND u.deleted_at IS NULL
+       AND u.is_deleted = false
        AND u.id NOT IN (
          SELECT following_id 
-         FROM user_follows 
+         FROM follows 
          WHERE follower_id = $1
        )
      ORDER BY u.follower_count DESC, u.created_at DESC
@@ -257,7 +257,7 @@ exports.checkMultipleFollows = async (followerId, userIds) => {
 
   const { rows } = await pool.query(
     `SELECT following_id, true as is_following
-     FROM user_follows
+     FROM follows
      WHERE follower_id = $1 AND following_id = ANY($2)`,
     [followerId, userIds]
   );
@@ -279,7 +279,7 @@ exports.checkMultipleFollows = async (followerId, userIds) => {
  */
 exports.removeFollower = async (userId, followerId) => {
   const { rows } = await pool.query(
-    `DELETE FROM user_follows 
+    `DELETE FROM follows 
      WHERE follower_id = $1 AND following_id = $2
      RETURNING id`,
     [followerId, userId]

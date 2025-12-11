@@ -67,8 +67,8 @@ class PostsController {
         post.attachments = [];
       }
 
-      // Enrich post with user details and other data
-      const enrichedPost = await postsService.getPostById(post.id, userId);
+      // Return post without enrichment for now
+      const enrichedPost = post;
 
       // Send notifications to mentioned users
       console.log('📝 Mentions received:', mentionsArray);
@@ -159,7 +159,41 @@ class PostsController {
       const limit = parseInt(req.query.limit) || 20;
       const offset = parseInt(req.query.offset) || 0;
       
-      const result = await postsService.getAllPosts(currentUserId, limit, offset);
+      // Simple query without enrichment for now
+      const postsResult = await pool.query(
+        `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image
+         FROM posts p
+         JOIN users u ON p.user_id = u.id
+         WHERE u.is_deleted = false
+         ORDER BY p.created_at DESC
+         LIMIT $1 OFFSET $2`,
+        [limit, offset]
+      );
+
+      const countResult = await pool.query(
+        `SELECT COUNT(*) as total
+         FROM posts p
+         JOIN users u ON p.user_id = u.id
+         WHERE u.is_deleted = false`
+      );
+
+      const posts = postsResult.rows.map(p => ({
+        ...p,
+        user_id: Number(p.user_id),
+        attachments: [],
+        likes: [],
+        liked_by_user: false,
+        bookmarked_by_user: false,
+        like_count: 0,
+        comments: []
+      }));
+      
+      const result = {
+        posts,
+        total: parseInt(countResult.rows[0].total),
+        hasMore: offset + limit < parseInt(countResult.rows[0].total)
+      };
+      
       res.json(result);
     } catch (err) {
       console.error('Error fetching posts:', err);

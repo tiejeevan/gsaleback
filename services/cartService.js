@@ -49,7 +49,7 @@ class CartService {
       const itemsResult = await client.query(
         `SELECT 
           ci.*,
-          p.title as product_title,
+          p.name as product_title,
           p.slug as product_slug,
           p.images as product_images,
           p.stock_quantity,

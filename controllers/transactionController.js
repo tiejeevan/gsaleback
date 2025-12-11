@@ -8,7 +8,7 @@ exports.createTransaction = async (req, res) => {
   try {
     // Verify the product belongs to the seller
     const productResult = await pool.query(
-      'SELECT id, title, images, slug, owner_id FROM products WHERE id = $1',
+      'SELECT id, name, images, slug, owner_id FROM products WHERE id = $1',
       [productId]
     );
 
@@ -46,7 +46,7 @@ exports.createTransaction = async (req, res) => {
         agreed_price, meeting_method, notes, seller_confirmed, seller_confirmed_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, CURRENT_TIMESTAMP)
        RETURNING *`,
-      [productId, product.title, productImage, product.slug, sellerId, buyerId, 
+      [productId, product.name, productImage, product.slug, sellerId, buyerId, 
        agreedPrice, meetingMethod, notes]
     );
 
@@ -174,7 +174,7 @@ exports.getPotentialBuyers = async (req, res) => {
   try {
     // Verify product ownership
     const productResult = await pool.query(
-      'SELECT owner_id, title, slug FROM products WHERE id = $1',
+      'SELECT owner_id, name, slug FROM products WHERE id = $1',
       [productId]
     );
 
@@ -262,7 +262,7 @@ exports.getPotentialBuyers = async (req, res) => {
          AND last_message_at > NOW() - INTERVAL '60 days'  -- Active in last 60 days
        ORDER BY engagement_score DESC, last_message_at DESC
        LIMIT 20`,
-      [sellerId, product.title, product.slug]
+      [sellerId, product.name, product.slug]
     );
 
     res.json({ buyers: result.rows });

@@ -20,11 +20,33 @@ class ProductsController {
       };
 
       // Generate slug if not provided
-      if (!productData.slug && productData.title) {
-        productData.slug = productData.title
+      if (!productData.slug && (productData.title || productData.name)) {
+        const nameToUse = productData.title || productData.name;
+        let baseSlug = nameToUse
           .toLowerCase()
           .replace(/[^a-z0-9]+/g, '-')
           .replace(/^-|-$/g, '');
+        
+        // Check for duplicate slugs and add suffix if needed
+        const pool = require('../db');
+        let slug = baseSlug;
+        let counter = 1;
+        
+        while (true) {
+          const existingProduct = await pool.query(
+            'SELECT id FROM products WHERE slug = $1 AND deleted_at IS NULL',
+            [slug]
+          );
+          
+          if (existingProduct.rows.length === 0) {
+            break;
+          }
+          
+          slug = `${baseSlug}-${counter}`;
+          counter++;
+        }
+        
+        productData.slug = slug;
       }
 
       const product = await productsService.createProduct(productData);
@@ -51,7 +73,7 @@ class ProductsController {
               'product_approval',
               JSON.stringify({
                 productId: product.id,
-                productTitle: product.title,
+                productTitle: product.name,
                 productImage: product.images?.[0] || null
               })
             ]
@@ -582,7 +604,7 @@ class ProductsController {
           'product_approved',
           JSON.stringify({
             productId: product.id,
-            productTitle: product.title
+            productTitle: product.name
           })
         ]
       );
@@ -641,7 +663,7 @@ class ProductsController {
           'product_rejected',
           JSON.stringify({
             productId: product.id,
-            productTitle: product.title,
+            productTitle: product.name,
             reason: reason || 'No reason provided'
           })
         ]

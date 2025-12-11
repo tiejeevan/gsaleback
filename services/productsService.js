@@ -13,6 +13,7 @@ class ProductsService {
     const {
       userId,
       title,
+      name,
       slug,
       description,
       short_description,
@@ -48,7 +49,7 @@ class ProductsService {
       // Insert product
       const productResult = await client.query(
         `INSERT INTO products (
-          title, slug, description, short_description, price, compare_at_price, 
+          name, slug, description, short_description, price, compare_at_price, 
           cost_price, sku, barcode, category_id, brand, stock_quantity, 
           low_stock_threshold, weight, dimensions, images, video_url, tags, 
           status, is_featured, owner_type, owner_id, seo_title, seo_description, 
@@ -57,7 +58,7 @@ class ProductsService {
                   $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
         RETURNING *`,
         [
-          title, slug, description, short_description, price, compare_at_price,
+          title || name, slug, description, short_description, price, compare_at_price,
           cost_price, sku, barcode, category_id, brand, stock_quantity || 0,
           low_stock_threshold || 10, weight, JSON.stringify(dimensions || {}),
           JSON.stringify(images || []), video_url, JSON.stringify(tags || []),
@@ -232,9 +233,9 @@ class ProductsService {
     if (search) {
       paramCount++;
       conditions.push(`(
-        to_tsvector('english', p.title || ' ' || COALESCE(p.description, '')) 
+        to_tsvector('english', p.name || ' ' || COALESCE(p.description, '')) 
         @@ plainto_tsquery('english', $${paramCount})
-        OR p.title ILIKE $${paramCount + 1}
+        OR p.name ILIKE $${paramCount + 1}
       )`);
       params.push(search, `%${search}%`);
       paramCount++;
@@ -261,7 +262,7 @@ class ProductsService {
     const whereClause = conditions.length > 0 ? conditions.join(' AND ') : '1=1';
 
     // Validate sort column
-    const validSortColumns = ['created_at', 'updated_at', 'price', 'title', 'views_count', 'sales_count', 'rating_average'];
+    const validSortColumns = ['created_at', 'updated_at', 'price', 'name', 'views_count', 'sales_count', 'rating_average'];
     const sortColumn = validSortColumns.includes(sort_by) ? sort_by : 'created_at';
     const sortDirection = sort_order.toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
@@ -340,7 +341,7 @@ class ProductsService {
 
       // Build update query dynamically
       const allowedFields = [
-        'title', 'slug', 'description', 'short_description', 'price', 
+        'name', 'slug', 'description', 'short_description', 'price', 
         'compare_at_price', 'cost_price', 'sku', 'barcode', 'category_id', 
         'brand', 'stock_quantity', 'low_stock_threshold', 'weight', 
         'dimensions', 'images', 'video_url', 'tags', 'status', 'is_featured',
@@ -350,6 +351,11 @@ class ProductsService {
       const updates = [];
       const values = [];
       let paramCount = 0;
+
+      // Handle title -> name mapping
+      if (updateData.title && !updateData.name) {
+        updateData.name = updateData.title;
+      }
 
       for (const field of allowedFields) {
         if (updateData[field] !== undefined) {

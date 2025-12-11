@@ -4,7 +4,7 @@ require('dotenv').config();
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
-        rejectUnauthorized: false // Required for Render Postgres
+        rejectUnauthorized: false // Required for Neon Postgres
     }
 });
 

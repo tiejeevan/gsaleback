@@ -71,7 +71,7 @@ router.post('/', verifyToken, canWrite, upload.array('files', 10), async (req, r
   try {
     // Validate post exists
     const postRes = await pool.query(
-      `SELECT id, user_id FROM posts WHERE id = $1 AND is_deleted = false`,
+      `SELECT id, user_id FROM posts WHERE id = $1`,
       [post_id]
     );
     if (postRes.rows.length === 0) return res.status(404).json({ error: 'Post not found' });

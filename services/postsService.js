@@ -13,29 +13,19 @@ const s3 = new AWS.S3({
 
 class PostsService {
   // Create a new post
-  async createPost({ userId, content, title, postType, visibility, tags, mentions, location, metadata, scheduledAt, commentsEnabled, sharedProductId }) {
-    const status = scheduledAt ? 'scheduled' : 'published';
-    
+  async createPost({ userId, content, imageUrl, videoUrl, linkPreview, sharedProductId }) {
     const result = await pool.query(
       `INSERT INTO posts (
-        user_id, content, title, post_type, visibility, tags, mentions, 
-        location, metadata, scheduled_at, status, comments_enabled, shared_product_id
+        user_id, content, image_url, video_url, link_preview, shared_product_id
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *`,
       [
         userId,
         content || null,
-        title || null,
-        postType || 'text',
-        visibility || 'public',
-        tags ? JSON.stringify(tags) : '[]',
-        mentions ? JSON.stringify(mentions) : '[]',
-        location || null,
-        metadata ? JSON.stringify(metadata) : '{}',
-        scheduledAt || null,
-        status,
-        commentsEnabled !== undefined ? commentsEnabled : true,
+        imageUrl || null,
+        videoUrl || null,
+        linkPreview ? JSON.stringify(linkPreview) : null,
         sharedProductId || null
       ]
     );
@@ -75,13 +65,13 @@ class PostsService {
   async getAllPosts(currentUserId, limit = 20, offset = 0) {
     const postsResult = await pool.query(
       `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image,
-              prod.id as product_id, prod.title as product_title, prod.price as product_price,
+              prod.id as product_id, prod.name as product_title, prod.price as product_price,
               prod.images as product_images, prod.stock_quantity as product_stock,
               prod.slug as product_slug
        FROM posts p
        JOIN users u ON p.user_id = u.id
        LEFT JOIN products prod ON p.shared_product_id = prod.id AND prod.deleted_at IS NULL
-       WHERE p.is_deleted = false AND p.status = 'published' AND p.visibility = 'public'
+       WHERE u.is_deleted = false
        ORDER BY p.created_at DESC
        LIMIT $1 OFFSET $2`,
       [limit, offset]
@@ -93,7 +83,8 @@ class PostsService {
     const countResult = await pool.query(
       `SELECT COUNT(*) as total
        FROM posts p
-       WHERE p.is_deleted = false AND p.status = 'published' AND p.visibility = 'public'`
+       JOIN users u ON p.user_id = u.id
+       WHERE u.is_deleted = false`
     );
     
     const enrichedPosts = await this.enrichPostsWithDetails(posts, currentUserId);
@@ -109,13 +100,13 @@ class PostsService {
   async getPostsByUserId(userId, currentUserId) {
     const postsResult = await pool.query(
       `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image,
-              prod.id as product_id, prod.title as product_title, prod.price as product_price,
+              prod.id as product_id, prod.name as product_title, prod.price as product_price,
               prod.images as product_images, prod.stock_quantity as product_stock,
               prod.slug as product_slug
        FROM posts p
        JOIN users u ON p.user_id = u.id
        LEFT JOIN products prod ON p.shared_product_id = prod.id AND prod.deleted_at IS NULL
-       WHERE p.user_id = $1 AND p.is_deleted = false AND p.status = 'published'
+       WHERE p.user_id = $1 AND u.is_deleted = false
        ORDER BY p.created_at DESC`,
       [userId]
     );
@@ -128,13 +119,13 @@ class PostsService {
   async getPostById(postId, currentUserId) {
     const postResult = await pool.query(
       `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image,
-              prod.id as product_id, prod.title as product_title, prod.price as product_price,
+              prod.id as product_id, prod.name as product_title, prod.price as product_price,
               prod.images as product_images, prod.stock_quantity as product_stock,
               prod.slug as product_slug
        FROM posts p
        JOIN users u ON p.user_id = u.id
        LEFT JOIN products prod ON p.shared_product_id = prod.id AND prod.deleted_at IS NULL
-       WHERE p.id = $1 AND p.is_deleted = false`,
+       WHERE p.id = $1 AND u.is_deleted = false`,
       [postId]
     );
 
@@ -142,38 +133,27 @@ class PostsService {
 
     const posts = await this.enrichPostsWithDetails([postResult.rows[0]], currentUserId);
     
-    // Increment view count
+    // Increment view count (update views_count to match the actual column name)
     await pool.query(
-      `UPDATE posts SET view_count = view_count + 1 WHERE id = $1`,
+      `UPDATE posts SET views_count = views_count + 1 WHERE id = $1`,
       [postId]
     );
 
     return posts[0];
   }
 
-  // Enrich posts with attachments, likes, and comments
+  // Enrich posts with likes, and comments
   async enrichPostsWithDetails(posts, currentUserId) {
     if (posts.length === 0) return [];
 
     const postIds = posts.map(p => p.id);
 
-    // Fetch attachments
-    const attachResult = await pool.query(
-      `SELECT id, post_id, file_name, file_url, uploaded_at
-       FROM attachments
-       WHERE post_id = ANY($1::int[])`,
-      [postIds]
-    );
-
+    // Skip attachments since table doesn't exist
     const attachmentsMap = new Map();
-    attachResult.rows.forEach(att => {
-      if (!attachmentsMap.has(att.post_id)) attachmentsMap.set(att.post_id, []);
-      attachmentsMap.get(att.post_id).push(att);
-    });
 
     // Fetch likes
     const likesResult = await pool.query(
-      `SELECT l.id AS like_id, l.user_id, l.reaction_type, l.target_id AS post_id
+      `SELECT l.id AS like_id, l.user_id, l.target_id as post_id
        FROM likes l
        WHERE l.target_type = 'post' AND l.target_id = ANY($1::int[])`,
       [postIds]
@@ -189,15 +169,15 @@ class PostsService {
 
     // Fetch bookmarks
     const bookmarksResult = await pool.query(
-      `SELECT post_id
+      `SELECT item_id as post_id
        FROM bookmarks
-       WHERE user_id = $1 AND post_id = ANY($2::int[])`,
+       WHERE user_id = $1 AND item_type = 'post' AND item_id::int = ANY($2::int[])`,
       [currentUserId, postIds]
     );
 
     const userBookmarkedSet = new Set();
     bookmarksResult.rows.forEach(bookmark => {
-      userBookmarkedSet.add(bookmark.post_id);
+      userBookmarkedSet.add(parseInt(bookmark.post_id));
     });
 
     // Fetch comments
@@ -208,7 +188,7 @@ class PostsService {
               c.updated_at AT TIME ZONE 'UTC' AS updated_at
        FROM comments c
        JOIN users u ON c.user_id = u.id
-       WHERE c.post_id = ANY($1::int[]) AND c.is_deleted = false
+       WHERE c.post_id = ANY($1::int[]) AND u.is_deleted = false
        ORDER BY c.created_at DESC`,
       [postIds]
     );
@@ -217,35 +197,16 @@ class PostsService {
       ...c,
       user_id: Number(c.user_id),
       post_id: Number(c.post_id),
-      parent_comment_id: c.parent_comment_id ? Number(c.parent_comment_id) : null,
+      parent_comment_id: c.reply_to ? Number(c.reply_to) : null,
       created_at: new Date(c.created_at).toISOString(),
       updated_at: new Date(c.updated_at).toISOString(),
       children: []
     }));
 
-    // Fetch comment likes
-    const commentIds = comments.map(c => c.id);
-    let commentLikesMap = new Map();
-    let commentUserLikedSet = new Set();
-
-    if (commentIds.length > 0) {
-      const commentLikesResult = await pool.query(
-        `SELECT comment_id, user_id
-         FROM comment_likes
-         WHERE comment_id = ANY($1::int[])`,
-        [commentIds]
-      );
-
-      commentLikesResult.rows.forEach(like => {
-        if (!commentLikesMap.has(like.comment_id)) commentLikesMap.set(like.comment_id, 0);
-        commentLikesMap.set(like.comment_id, commentLikesMap.get(like.comment_id) + 1);
-        if (like.user_id === currentUserId) commentUserLikedSet.add(like.comment_id);
-      });
-    }
-
+    // No comment likes table, set defaults
     comments.forEach(c => {
-      c.like_count = commentLikesMap.get(c.id) || 0;
-      c.liked_by_user = commentUserLikedSet.has(c.id);
+      c.like_count = 0;
+      c.liked_by_user = false;
     });
 
     // Build comment trees
@@ -259,7 +220,7 @@ class PostsService {
     return posts.map(post => {
       const enrichedPost = {
         ...post,
-        attachments: attachmentsMap.get(post.id) || [],
+        attachments: [], // No attachments table
         likes: likesMap.get(post.id) || [],
         liked_by_user: userLikedSet.has(post.id),
         bookmarked_by_user: userBookmarkedSet.has(post.id),
@@ -272,6 +233,7 @@ class PostsService {
         enrichedPost.shared_product = {
           id: post.product_id,
           title: post.product_title,
+          name: post.product_title,
           price: post.product_price,
           images: post.product_images,
           stock_quantity: post.product_stock,
@@ -377,10 +339,10 @@ class PostsService {
     return result.rows[0] || null;
   }
 
-  // Soft delete post
+  // Soft delete post (using is_archived since is_deleted doesn't exist)
   async deletePost(postId, userId) {
     const result = await pool.query(
-      `UPDATE posts SET is_deleted = true, status = 'deleted' 
+      `UPDATE posts SET is_archived = true 
        WHERE id = $1 AND user_id = $2 
        RETURNING *`,
       [postId, userId]
@@ -413,7 +375,7 @@ class PostsService {
       `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image
        FROM posts p
        JOIN users u ON p.user_id = u.id
-       WHERE p.user_id = $1 AND p.is_pinned = TRUE AND p.is_deleted = FALSE
+       WHERE p.user_id = $1 AND p.is_pinned = TRUE AND u.is_deleted = FALSE
        LIMIT 1`,
       [userId]
     );
