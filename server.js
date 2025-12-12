@@ -22,6 +22,7 @@ app.use(express.json());
 
 // Routes
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/webauthn', require('./routes/webauthn'));
 app.use('/api/posts', require('./routes/posts'));
 app.use("/api/upload", uploadRoute);
 app.use('/api/likes', require('./routes/likes'));
