@@ -12,6 +12,8 @@ router.get("/", verifyToken, async (req, res) => {
     const result = await pool.query(
       `SELECT n.*, 
               u.username AS actor_name,
+              u.display_name AS actor_display_name,
+              u.profile_image AS actor_avatar,
               n.created_at AT TIME ZONE 'UTC' AS created_at
        FROM notifications n
        LEFT JOIN users u ON n.actor_user_id = u.id
@@ -161,10 +163,25 @@ router.post("/", verifyToken, async (req, res) => {
 
     const notif = result.rows[0];
 
+    // Fetch actor details for real-time event
+    const actorResult = await pool.query(
+      `SELECT username, display_name, profile_image FROM users WHERE id = $1`,
+      [actor_user_id]
+    );
+    const actor = actorResult.rows[0];
+
+    // Enrich notification for socket emit
+    const enrichedNotif = {
+      ...notif,
+      actor_name: actor.username,
+      actor_display_name: actor.display_name,
+      actor_avatar: actor.profile_image
+    };
+
     // Optional: Emit via Socket.IO
     const io = req.app.get("io");
     if (io) {
-      io.to(`user_${recipient_user_id}`).emit("notification:new", notif);
+      io.to(`user_${recipient_user_id}`).emit("notification:new", enrichedNotif);
     }
 
     res.json(notif);
