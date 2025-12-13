@@ -73,6 +73,14 @@ exports.addLike = async (req, res) => {
       }
     }
 
+    // Update the posts.likes_count column for posts
+    if (target_type === 'post') {
+      await pool.query(
+        'UPDATE posts SET likes_count = (SELECT COUNT(*) FROM likes WHERE target_type = $1 AND target_id = $2) WHERE id = $2',
+        [target_type, target_id]
+      );
+    }
+
     // Emit like event for real-time like updates
     const io = req.app.get('io');
     if (io) {
@@ -108,6 +116,14 @@ exports.removeLike = async (req, res) => {
 
     // Note: We don't remove notifications when someone unlikes
     // This ensures only ONE notification per user per post (ever)
+
+    // Update the posts.likes_count column for posts
+    if (target_type === 'post') {
+      await pool.query(
+        'UPDATE posts SET likes_count = (SELECT COUNT(*) FROM likes WHERE target_type = $1 AND target_id = $2) WHERE id = $2',
+        [target_type, target_id]
+      );
+    }
 
     // Emit socket event for real-time update
     const io = req.app.get('io');

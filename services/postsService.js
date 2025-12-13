@@ -224,7 +224,7 @@ class PostsService {
         likes: likesMap.get(post.id) || [],
         liked_by_user: userLikedSet.has(post.id),
         bookmarked_by_user: userBookmarkedSet.has(post.id),
-        like_count: (likesMap.get(post.id) || []).length,
+        like_count: post.likes_count || 0,
         comments: commentsByPost.get(post.id) || []
       };
 

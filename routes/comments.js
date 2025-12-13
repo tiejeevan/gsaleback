@@ -234,13 +234,13 @@ router.get('/:postId', verifyToken, async (req, res) => {
   
       if (commentIds.length > 0) {
         const likesCountRes = await pool.query(
-          `SELECT comment_id, COUNT(*) AS cnt FROM comment_likes WHERE comment_id = ANY($1::bigint[]) GROUP BY comment_id`,
+          `SELECT comment_id, COUNT(*) AS cnt FROM comment_likes WHERE comment_id = ANY($1::int[]) GROUP BY comment_id`,
           [commentIds]
         );
         likesCountRes.rows.forEach(r => likesMap.set(Number(r.comment_id), parseInt(r.cnt, 10)));
   
         const userLikesRes = await pool.query(
-          `SELECT comment_id FROM comment_likes WHERE comment_id = ANY($1::bigint[]) AND user_id = $2`,
+          `SELECT comment_id FROM comment_likes WHERE comment_id = ANY($1::int[]) AND user_id = $2`,
           [commentIds, userId]
         );
         userLikesRes.rows.forEach(r => userLikedSet.add(Number(r.comment_id)));
@@ -460,7 +460,7 @@ router.post('/:id/like', verifyToken, canWrite, async (req, res) => {
         // Only create notification if it doesn't exist
         if (existingNotification.rows.length === 0) {
           const notificationResult = await pool.query(
-            `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload, is_read, created_at)
+            `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload, read, created_at)
              VALUES ($1, $2, 'comment_like', $3, false, CURRENT_TIMESTAMP)
              RETURNING *`,
             [

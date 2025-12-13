@@ -98,7 +98,7 @@ class PostsController {
               console.log(`📬 Creating notification for user ${mentionedUser.username} (ID: ${mentionedUser.id})`);
               
               const notifResult = await pool.query(
-                `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload, is_read, created_at)
+                `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload, read, created_at)
                  VALUES ($1, $2, 'mention', $3, false, CURRENT_TIMESTAMP)
                  RETURNING *`,
                 [
@@ -159,40 +159,8 @@ class PostsController {
       const limit = parseInt(req.query.limit) || 20;
       const offset = parseInt(req.query.offset) || 0;
       
-      // Simple query without enrichment for now
-      const postsResult = await pool.query(
-        `SELECT p.*, u.username, u.first_name, u.last_name, u.profile_image
-         FROM posts p
-         JOIN users u ON p.user_id = u.id
-         WHERE u.is_deleted = false
-         ORDER BY p.created_at DESC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset]
-      );
-
-      const countResult = await pool.query(
-        `SELECT COUNT(*) as total
-         FROM posts p
-         JOIN users u ON p.user_id = u.id
-         WHERE u.is_deleted = false`
-      );
-
-      const posts = postsResult.rows.map(p => ({
-        ...p,
-        user_id: Number(p.user_id),
-        attachments: [],
-        likes: [],
-        liked_by_user: false,
-        bookmarked_by_user: false,
-        like_count: 0,
-        comments: []
-      }));
-      
-      const result = {
-        posts,
-        total: parseInt(countResult.rows[0].total),
-        hasMore: offset + limit < parseInt(countResult.rows[0].total)
-      };
+      // Use the service method that properly enriches posts with likes
+      const result = await postsService.getAllPosts(currentUserId, limit, offset);
       
       res.json(result);
     } catch (err) {

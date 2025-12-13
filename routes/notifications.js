@@ -53,27 +53,15 @@ router.put("/:id/read", verifyToken, async (req, res) => {
     
     const notification = notifResult.rows[0];
     
-    // Mark as read
-    await pool.query(
+    // Mark as read (no more soft delete for mentions)
+    const updateResult = await pool.query(
       `UPDATE notifications SET read = true 
-       WHERE id = $1 AND recipient_user_id = $2`,
+       WHERE id = $1 AND recipient_user_id = $2
+       RETURNING id, read`,
       [id, userId]
     );
     
-    // If it's a mention notification, handle mention record
-    if (notification.type === 'mention') {
-      // Also soft delete the mention record
-      const commentId = notification.payload?.commentId;
-      if (commentId) {
-        await mentionsService.softDeleteMention(commentId, userId);
-      }
-      
-      // Emit real-time event to remove notification from UI
-      const io = req.app.get("io");
-      if (io) {
-        io.to(`user_${userId}`).emit("notification:deleted", { notificationId: parseInt(id) });
-      }
-    }
+
     
     res.json({ success: true });
   } catch (err) {
@@ -101,7 +89,62 @@ router.put("/read-all", verifyToken, async (req, res) => {
 });
 
 // ========================
-// 4️⃣ Create new notification
+// 4️⃣ Get notification statistics
+// ========================
+router.get("/stats", verifyToken, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    
+    // Get total count
+    const totalResult = await pool.query(
+      `SELECT COUNT(*) as total FROM notifications WHERE recipient_user_id = $1`,
+      [userId]
+    );
+    
+    // Get unread count
+    const unreadResult = await pool.query(
+      `SELECT COUNT(*) as unread FROM notifications WHERE recipient_user_id = $1 AND read = false`,
+      [userId]
+    );
+    
+    // Get counts by type
+    const typeResult = await pool.query(
+      `SELECT type, COUNT(*) as count 
+       FROM notifications 
+       WHERE recipient_user_id = $1 
+       GROUP BY type 
+       ORDER BY count DESC`,
+      [userId]
+    );
+    
+    // Get recent activity (last 7 days)
+    const recentResult = await pool.query(
+      `SELECT DATE(created_at) as date, COUNT(*) as count
+       FROM notifications 
+       WHERE recipient_user_id = $1 
+       AND created_at >= NOW() - INTERVAL '7 days'
+       GROUP BY DATE(created_at)
+       ORDER BY date DESC`,
+      [userId]
+    );
+    
+    res.json({
+      total: parseInt(totalResult.rows[0].total),
+      unread: parseInt(unreadResult.rows[0].unread),
+      byType: typeResult.rows.reduce((acc, row) => {
+        acc[row.type] = parseInt(row.count);
+        return acc;
+      }, {}),
+      recentActivity: recentResult.rows
+    });
+  } catch (err) {
+    console.error("Error fetching notification stats:", err);
+    res.status(500).json({ error: "Failed to fetch notification stats" });
+  }
+});
+
+// ========================
+// 5️⃣ Create new notification
 // (Used internally, e.g. like/comment triggers this)
 // ========================
 router.post("/", verifyToken, async (req, res) => {
@@ -132,7 +175,7 @@ router.post("/", verifyToken, async (req, res) => {
 });
 
 // ========================
-// 5️⃣ Soft delete notification
+// 6️⃣ Soft delete notification
 // ========================
 router.delete("/:id", verifyToken, async (req, res) => {
   try {
@@ -157,13 +200,7 @@ router.delete("/:id", verifyToken, async (req, res) => {
       [id, userId]
     );
     
-    // If it's a mention, also soft delete the mention record
-    if (notification.type === 'mention') {
-      const commentId = notification.payload?.commentId;
-      if (commentId) {
-        await mentionsService.softDeleteMention(commentId, userId);
-      }
-    }
+    // Note: We no longer soft delete mention records when deleting notifications
     
     // Emit real-time event to remove notification from UI
     const io = req.app.get("io");

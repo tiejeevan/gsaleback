@@ -104,7 +104,7 @@ const notifyMentionedUsers = async ({ commentId, postId, mentionerUserId, mentio
     
     for (const userId of uniqueMentionedUsers) {
       const notifRes = await pool.query(
-        `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload, is_read, created_at)
+        `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload, read, created_at)
          VALUES ($1, $2, 'mention', $3, false, CURRENT_TIMESTAMP)
          RETURNING *`,
         [
