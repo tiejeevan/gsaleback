@@ -34,7 +34,7 @@ exports.addLike = async (req, res) => {
 
       if (postOwner.rows.length > 0) {
         const recipientUserId = postOwner.rows[0].user_id;
-        
+
         // Don't send notification if user likes their own post
         if (recipientUserId !== userId) {
           // Check if notification already exists for this post and user combination
@@ -58,6 +58,7 @@ exports.addLike = async (req, res) => {
                 JSON.stringify({
                   target_type,
                   target_id,
+                  postId: target_id, // Add postId for frontend compatibility
                   message: 'liked your post'
                 })
               ]
@@ -67,6 +68,54 @@ exports.addLike = async (req, res) => {
             const io = req.app.get('io');
             if (io) {
               io.to(`user_${recipientUserId}`).emit('notification:new', notificationResult.rows[0]);
+            }
+          }
+        }
+      }
+    } else if (isNewLike && target_type === 'comment') {
+      // Get the comment owner and post_id to send notification
+      const commentResult = await pool.query(
+        'SELECT user_id, post_id FROM comments WHERE id = $1',
+        [target_id]
+      );
+
+      if (commentResult.rows.length > 0) {
+        const { user_id: recipientUserId, post_id: postId } = commentResult.rows[0];
+
+        // Don't send notification if user likes their own comment
+        if (recipientUserId !== userId) {
+          // Check if notification already exists for this comment and user combination
+          const existingNotification = await pool.query(
+            `SELECT id FROM notifications 
+             WHERE recipient_user_id = $1 AND actor_user_id = $2 AND type = 'comment_like' 
+             AND payload->>'commentId' = $3`,
+            [recipientUserId, userId, target_id.toString()]
+          );
+
+          // Only create notification if it doesn't exist
+          if (existingNotification.rows.length === 0) {
+            const notificationResult = await pool.query(
+              `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
+               VALUES ($1, $2, $3, $4)
+               RETURNING *`,
+              [
+                recipientUserId,
+                userId,
+                'comment_like',
+                JSON.stringify({
+                  commentId: target_id,
+                  postId: postId,
+                  message: 'liked your comment'
+                })
+              ]
+            );
+
+            // Send real-time notification
+            const io = req.app.get('io');
+            if (io) {
+              const notifData = notificationResult.rows[0];
+              // Add actor info if possible, or frontend handles it
+              io.to(`user_${recipientUserId}`).emit('notification:new', notifData);
             }
           }
         }

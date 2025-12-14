@@ -157,6 +157,14 @@ router.post('/', verifyToken, canWrite, upload.array('files', 10), async (req, r
       console.log(`📝 Post owner: ${postOwnerId}, Commenter: ${comment.user_id}`);
       if (postOwnerId !== comment.user_id) {
         console.log(`🔔 Creating notification for post owner ${postOwnerId}`);
+        
+        // Get actor information
+        const actorInfo = await pool.query(
+          'SELECT username, display_name, profile_image FROM users WHERE id = $1',
+          [comment.user_id]
+        );
+        const actor = actorInfo.rows[0] || {};
+        
         const notifRes = await pool.query(
           `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
        VALUES ($1, $2, 'comment', $3) RETURNING *`,
@@ -171,11 +179,75 @@ router.post('/', verifyToken, canWrite, upload.array('files', 10), async (req, r
           ]
         );
 
+        // Enrich notification with actor info
+        const enrichedNotification = {
+          ...notifRes.rows[0],
+          actor_name: actor.username,
+          actor_display_name: actor.display_name,
+          actor_avatar: actor.profile_image
+        };
+
         const roomName = `user_${postOwnerId.toString()}`;
-        console.log(`🔔 Emitting notification to room: ${roomName}`, notifRes.rows[0]);
-        io.to(roomName).emit('notification:new', notifRes.rows[0]);
+        console.log(`🔔 Emitting notification to room: ${roomName}`, enrichedNotification);
+        io.to(roomName).emit('notification:new', enrichedNotification);
       } else {
         console.log(`⏭️ Skipping notification (user commenting on own post)`);
+      }
+
+      // 2.5️⃣ Notify parent comment owner if this is a reply
+      if (parent_comment_id) {
+        console.log(`📝 This is a reply to comment ${parent_comment_id}`);
+        
+        // Get parent comment owner
+        const parentCommentRes = await pool.query(
+          'SELECT user_id FROM comments WHERE id = $1',
+          [parent_comment_id]
+        );
+        
+        if (parentCommentRes.rows.length > 0) {
+          const parentCommentOwnerId = parentCommentRes.rows[0].user_id;
+          
+          // Only notify if the reply is not from the parent comment owner and not the post owner (to avoid duplicate notifications)
+          if (parentCommentOwnerId !== comment.user_id && parentCommentOwnerId !== postOwnerId) {
+            console.log(`🔔 Creating reply notification for parent comment owner ${parentCommentOwnerId}`);
+            
+            // Get actor information
+            const actorInfo = await pool.query(
+              'SELECT username, display_name, profile_image FROM users WHERE id = $1',
+              [comment.user_id]
+            );
+            const actor = actorInfo.rows[0] || {};
+            
+            const replyNotifRes = await pool.query(
+              `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload)
+           VALUES ($1, $2, 'comment_reply', $3) RETURNING *`,
+              [
+                parentCommentOwnerId,
+                comment.user_id,
+                JSON.stringify({
+                  postId: comment.post_id,
+                  commentId: comment.id,
+                  parentCommentId: parent_comment_id,
+                  text: comment.content?.slice(0, 50)
+                })
+              ]
+            );
+
+            // Enrich notification with actor info
+            const enrichedReplyNotification = {
+              ...replyNotifRes.rows[0],
+              actor_name: actor.username,
+              actor_display_name: actor.display_name,
+              actor_avatar: actor.profile_image
+            };
+
+            const replyRoomName = `user_${parentCommentOwnerId.toString()}`;
+            console.log(`🔔 Emitting reply notification to room: ${replyRoomName}`, enrichedReplyNotification);
+            io.to(replyRoomName).emit('notification:new', enrichedReplyNotification);
+          } else {
+            console.log(`⏭️ Skipping reply notification (same user or already notified as post owner)`);
+          }
+        }
       }
 
       // 3️⃣ Notify mentioned users
@@ -449,41 +521,73 @@ router.post('/:id/like', verifyToken, canWrite, async (req, res) => {
 
       // Send notification to comment owner (if not liking own comment)
       if (commentOwnerId !== req.user.id) {
-        // Check if notification already exists for this comment and user combination
-        const existingNotification = await pool.query(
-          `SELECT id FROM notifications 
-           WHERE recipient_user_id = $1 AND actor_user_id = $2 AND type = 'comment_like' 
-           AND payload->>'comment_id' = $3`,
-          [commentOwnerId, req.user.id, id.toString()]
-        );
-
-        // Only create notification if it doesn't exist
-        if (existingNotification.rows.length === 0) {
-          const notificationResult = await pool.query(
-            `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload, read, created_at)
-             VALUES ($1, $2, 'comment_like', $3, false, CURRENT_TIMESTAMP)
-             RETURNING *`,
-            [
-              commentOwnerId,
-              req.user.id,
-              JSON.stringify({
-                comment_id: Number(id),
-                post_id,
-                text: content?.slice(0, 50),
-                message: 'liked your comment'
-              })
-            ]
+        try {
+          // Check if notification already exists for this comment and user combination
+          const existingNotification = await pool.query(
+            `SELECT id FROM notifications 
+             WHERE recipient_user_id = $1 AND actor_user_id = $2 AND type = 'comment_like' 
+             AND (payload->>'comment_id' = $3 OR payload->>'commentId' = $3)`,
+            [commentOwnerId, req.user.id, id.toString()]
           );
 
-          // Send real-time notification
-          const roomName = `user_${commentOwnerId}`;
-          io.to(roomName).emit('notification:new', notificationResult.rows[0]);
-          console.log(`🔔 Sent comment like notification to user_${commentOwnerId}`);
+          // Only create notification if it doesn't exist
+          if (existingNotification.rows.length === 0) {
+            // Get actor information for the notification
+            const actorInfo = await pool.query(
+              'SELECT username, display_name, profile_image FROM users WHERE id = $1',
+              [req.user.id]
+            );
+            
+            const actor = actorInfo.rows[0] || {};
+            
+            const notificationResult = await pool.query(
+              `INSERT INTO notifications (recipient_user_id, actor_user_id, type, payload, read, created_at)
+               VALUES ($1, $2, 'comment_like', $3, false, CURRENT_TIMESTAMP)
+               RETURNING *`,
+              [
+                commentOwnerId,
+                req.user.id,
+                JSON.stringify({
+                  commentId: Number(id),
+                  comment_id: Number(id),
+                  postId: post_id,
+                  post_id,
+                  text: content?.slice(0, 50),
+                  message: 'liked your comment'
+                })
+              ]
+            );
+
+            // Enrich notification with actor info
+            const enrichedNotification = {
+              ...notificationResult.rows[0],
+              actor_name: actor.username,
+              actor_display_name: actor.display_name,
+              actor_avatar: actor.profile_image
+            };
+
+            // Send real-time notification
+            const roomName = `user_${commentOwnerId}`;
+            io.to(roomName).emit('notification:new', enrichedNotification);
+            console.log(`🔔 Sent comment like notification to ${roomName}:`, {
+              type: 'comment_like',
+              from: req.user.id,
+              to: commentOwnerId,
+              commentId: id,
+              postId: post_id,
+              actor: actor.username
+            });
+          } else {
+            console.log(`📝 Comment like notification already exists for comment ${id} from user ${req.user.id}`);
+          }
+        } catch (notifError) {
+          console.error('❌ Error creating comment like notification:', notifError);
+          // Don't fail the like operation if notification fails
         }
       }
     }
 
-    res.json({ msg: 'Comment liked' });
+    res.json({ success: true, msg: 'Comment liked' });
   } catch (err) {
     console.error('Like comment error:', err);
     res.status(500).json({ error: 'Failed to like comment', details: err.message });
@@ -519,7 +623,7 @@ router.post('/:id/unlike', verifyToken, canWrite, async (req, res) => {
       });
     }
 
-    res.json({ msg: 'Comment unliked' });
+    res.json({ success: true, msg: 'Comment unliked' });
   } catch (err) {
     console.error('Unlike comment error:', err);
     res.status(500).json({ error: 'Failed to unlike comment', details: err.message });
