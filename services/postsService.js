@@ -13,12 +13,17 @@ const s3 = new AWS.S3({
 
 class PostsService {
   // Create a new post
-  async createPost({ userId, content, imageUrl, videoUrl, linkPreview, sharedProductId }) {
+  // Create a new post
+  async createPost({
+    userId, content, imageUrl, videoUrl, linkPreview, sharedProductId,
+    title, postType, visibility, tags, mentions, location, metadata, scheduledAt, commentsEnabled
+  }) {
     const result = await pool.query(
       `INSERT INTO posts (
-        user_id, content, image_url, video_url, link_preview, shared_product_id
+        user_id, content, image_url, video_url, link_preview, shared_product_id,
+        title, post_type, visibility, tags, mentions, location, metadata, scheduled_at, comments_enabled
       )
-      VALUES ($1, $2, $3, $4, $5, $6)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *`,
       [
         userId,
@@ -26,7 +31,16 @@ class PostsService {
         imageUrl || null,
         videoUrl || null,
         linkPreview ? JSON.stringify(linkPreview) : null,
-        sharedProductId || null
+        sharedProductId || null,
+        title || null,
+        postType || 'basic',
+        visibility || 'public',
+        JSON.stringify(tags || []),
+        JSON.stringify(mentions || []),
+        location || null,
+        JSON.stringify(metadata || {}),
+        scheduledAt || null,
+        commentsEnabled !== undefined ? commentsEnabled : true
       ]
     );
 
@@ -45,7 +59,7 @@ class PostsService {
         Body: file.buffer,
         ContentType: file.mimetype,
       };
-      
+
       await s3.upload(params).promise();
       const fileUrl = `${process.env.R2_ENDPOINT}/${process.env.R2_BUCKET_NAME}/${key}`;
 
@@ -71,24 +85,35 @@ class PostsService {
        FROM posts p
        JOIN users u ON p.user_id = u.id
        LEFT JOIN products prod ON p.shared_product_id = prod.id AND prod.deleted_at IS NULL
-       WHERE u.is_deleted = false
+       WHERE u.is_deleted = false 
+       AND (
+         p.visibility = 'public' 
+         OR p.user_id = $3
+         OR (p.visibility = 'follows' AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $3 AND f.following_id = p.user_id))
+       )
        ORDER BY p.created_at DESC
        LIMIT $1 OFFSET $2`,
-      [limit, offset]
+      [limit, offset, currentUserId]
     );
 
     const posts = postsResult.rows.map(p => ({ ...p, user_id: Number(p.user_id) }));
-    
-    // Get total count for pagination
+
+    // Get total count for pagination with same filters (important for correct pagination)
     const countResult = await pool.query(
       `SELECT COUNT(*) as total
        FROM posts p
        JOIN users u ON p.user_id = u.id
-       WHERE u.is_deleted = false`
+       WHERE u.is_deleted = false
+       AND (
+         p.visibility = 'public' 
+         OR p.user_id = $1
+         OR (p.visibility = 'follows' AND EXISTS (SELECT 1 FROM follows f WHERE f.follower_id = $1 AND f.following_id = p.user_id))
+       )`,
+      [currentUserId]
     );
-    
+
     const enrichedPosts = await this.enrichPostsWithDetails(posts, currentUserId);
-    
+
     return {
       posts: enrichedPosts,
       total: parseInt(countResult.rows[0].total),
@@ -132,7 +157,7 @@ class PostsService {
     if (postResult.rows.length === 0) return null;
 
     const posts = await this.enrichPostsWithDetails([postResult.rows[0]], currentUserId);
-    
+
     // Increment view count (update views_count to match the actual column name)
     await pool.query(
       `UPDATE posts SET views_count = views_count + 1 WHERE id = $1`,
@@ -259,7 +284,7 @@ class PostsService {
   buildCommentsTree(comments) {
     const map = new Map();
     const roots = [];
-    
+
     comments.forEach(c => map.set(c.id, c));
     comments.forEach(c => {
       if (!c.parent_comment_id) {
@@ -270,7 +295,7 @@ class PostsService {
         else roots.push(c);
       }
     });
-    
+
     return roots;
   }
 
@@ -278,7 +303,7 @@ class PostsService {
   async updatePost(postId, userId, updates) {
     const { content, title, visibility, postType, tags, mentions, location, commentsEnabled, comments_enabled, metadata } = updates;
     const commentsEnabledValue = commentsEnabled !== undefined ? commentsEnabled : comments_enabled;
-    
+
     // Build dynamic SET clause to handle boolean values properly
     const setClauses = [];
     const values = [];
@@ -381,7 +406,7 @@ class PostsService {
     );
 
     if (result.rows.length === 0) return null;
-    
+
     const posts = await this.enrichPostsWithDetails([result.rows[0]], userId);
     return posts[0];
   }

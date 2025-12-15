@@ -51,4 +51,6 @@ scripts/create-*.js
 
 # Temporary files
 *.tmp
-*.temp
+
+# Database Backups
+backdb/
