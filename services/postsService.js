@@ -1,6 +1,7 @@
 // services/postsService.js
 const pool = require('../db');
 const AWS = require('aws-sdk');
+const sharp = require('sharp');
 
 // Cloudflare R2 client
 const s3 = new AWS.S3({
@@ -10,6 +11,18 @@ const s3 = new AWS.S3({
   signatureVersion: 'v4',
   region: 'auto',
 });
+
+// Helper function to upload a buffer to R2
+const uploadToR2 = async (buffer, key, contentType) => {
+  const params = {
+    Bucket: process.env.R2_BUCKET_NAME,
+    Key: key,
+    Body: buffer,
+    ContentType: contentType,
+    ACL: "public-read",
+  };
+  await s3.upload(params).promise();
+};
 
 class PostsService {
   // Create a new post
@@ -47,29 +60,61 @@ class PostsService {
     return result.rows[0];
   }
 
-  // Upload files to R2 and create attachments
+  // Upload files to R2 and create attachments with Sharp compression
   async uploadAttachments(postId, files) {
     if (!files || files.length === 0) return [];
 
     const attachmentPromises = files.map(async (file) => {
-      const key = `${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`;
-      const params = {
-        Bucket: process.env.R2_BUCKET_NAME,
-        Key: key,
-        Body: file.buffer,
-        ContentType: file.mimetype,
-      };
+      const baseKey = `${Date.now()}-${file.originalname.replace(/\s+/g, '_')}`;
+      let finalKey = baseKey;
+      let contentType = file.mimetype;
 
-      await s3.upload(params).promise();
-      const fileUrl = `${process.env.R2_ENDPOINT}/${process.env.R2_BUCKET_NAME}/${key}`;
+      // Process images with Sharp for compression
+      if (file.mimetype.startsWith('image/')) {
+        try {
+          // Compress and convert to WebP
+          const compressedBuffer = await sharp(file.buffer)
+            .resize(1200, 1200, { 
+              fit: 'inside', 
+              withoutEnlargement: true 
+            })
+            .webp({ quality: 85 })
+            .toBuffer();
+          
+          finalKey = baseKey.replace(/\.[^/.]+$/, '') + '.webp';
+          contentType = 'image/webp';
+          
+          await uploadToR2(compressedBuffer, finalKey, contentType);
+          
+          // Also generate thumbnail for faster loading
+          const thumbBuffer = await sharp(file.buffer)
+            .resize(200, 200, { fit: 'inside', withoutEnlargement: true })
+            .webp({ quality: 80 })
+            .toBuffer();
+          const thumbKey = baseKey.replace(/\.[^/.]+$/, '') + '-thumb.webp';
+          await uploadToR2(thumbBuffer, thumbKey, 'image/webp');
+          
+          console.log(`✅ Image compressed and uploaded: ${finalKey}`);
+        } catch (err) {
+          console.error('❌ Sharp processing failed, uploading original:', err.message);
+          // Fallback: upload original file
+          await uploadToR2(file.buffer, baseKey, file.mimetype);
+          finalKey = baseKey;
+        }
+      } else {
+        // Non-image files: upload as-is
+        await uploadToR2(file.buffer, baseKey, file.mimetype);
+      }
 
-      await pool.query(
+      // Store just the key (not full URL) - frontend will build the URL
+      const result = await pool.query(
         `INSERT INTO attachments (post_id, file_name, file_url)
-         VALUES ($1, $2, $3)`,
-        [postId, file.originalname, fileUrl]
+         VALUES ($1, $2, $3)
+         RETURNING id, file_name, file_url, uploaded_at`,
+        [postId, file.originalname, finalKey]
       );
 
-      return { file_name: file.originalname, url: fileUrl };
+      return result.rows[0];
     });
 
     return Promise.all(attachmentPromises);
@@ -86,6 +131,7 @@ class PostsService {
        JOIN users u ON p.user_id = u.id
        LEFT JOIN products prod ON p.shared_product_id = prod.id AND prod.deleted_at IS NULL
        WHERE u.is_deleted = false 
+       AND (p.is_archived = false OR p.is_archived IS NULL)
        AND (
          p.visibility = 'public' 
          OR p.user_id = $3
@@ -104,6 +150,7 @@ class PostsService {
        FROM posts p
        JOIN users u ON p.user_id = u.id
        WHERE u.is_deleted = false
+       AND (p.is_archived = false OR p.is_archived IS NULL)
        AND (
          p.visibility = 'public' 
          OR p.user_id = $1
@@ -132,6 +179,7 @@ class PostsService {
        JOIN users u ON p.user_id = u.id
        LEFT JOIN products prod ON p.shared_product_id = prod.id AND prod.deleted_at IS NULL
        WHERE p.user_id = $1 AND u.is_deleted = false
+       AND (p.is_archived = false OR p.is_archived IS NULL)
        ORDER BY p.created_at DESC`,
       [userId]
     );
@@ -150,7 +198,8 @@ class PostsService {
        FROM posts p
        JOIN users u ON p.user_id = u.id
        LEFT JOIN products prod ON p.shared_product_id = prod.id AND prod.deleted_at IS NULL
-       WHERE p.id = $1 AND u.is_deleted = false`,
+       WHERE p.id = $1 AND u.is_deleted = false
+       AND (p.is_archived = false OR p.is_archived IS NULL)`,
       [postId]
     );
 
@@ -173,8 +222,26 @@ class PostsService {
 
     const postIds = posts.map(p => p.id);
 
-    // Skip attachments since table doesn't exist
+    // Fetch attachments for all posts
     const attachmentsMap = new Map();
+    try {
+      const attachmentsResult = await pool.query(
+        `SELECT id, post_id, file_name, file_url, uploaded_at
+         FROM attachments
+         WHERE post_id = ANY($1::int[])
+         ORDER BY uploaded_at ASC`,
+        [postIds]
+      );
+      
+      attachmentsResult.rows.forEach(att => {
+        if (!attachmentsMap.has(att.post_id)) {
+          attachmentsMap.set(att.post_id, []);
+        }
+        attachmentsMap.get(att.post_id).push(att);
+      });
+    } catch (err) {
+      console.error('Error fetching attachments:', err.message);
+    }
 
     // Fetch likes
     const likesResult = await pool.query(
@@ -245,7 +312,7 @@ class PostsService {
     return posts.map(post => {
       const enrichedPost = {
         ...post,
-        attachments: [], // No attachments table
+        attachments: attachmentsMap.get(post.id) || [],
         likes: likesMap.get(post.id) || [],
         liked_by_user: userLikedSet.has(post.id),
         bookmarked_by_user: userBookmarkedSet.has(post.id),
