@@ -39,12 +39,56 @@ class ProductsService {
       seo_description,
       meta_keywords,
       attributes,
-      media
+      media,
+      // New location fields
+      location,
+      zip_code,
+      city,
+      state,
+      country,
+      country_code,
+      latitude,
+      longitude
     } = productData;
 
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
+      // Auto-populate location from user profile if not provided
+      let finalLocation = location;
+      let finalZipCode = zip_code;
+      let finalCity = city;
+      let finalState = state;
+      let finalCountry = country;
+      let finalCountryCode = country_code;
+      let finalLatitude = latitude;
+      let finalLongitude = longitude;
+
+      if (!finalCity && !finalZipCode && !finalLatitude) {
+        try {
+          const userResult = await client.query(
+            `SELECT city, region as state, country_name as country, country as country_code, 
+                    latitude, longitude FROM users WHERE id = $1`,
+            [userId]
+          );
+          if (userResult.rows.length > 0) {
+            const user = userResult.rows[0];
+            finalCity = user.city || null;
+            finalState = user.state || null;
+            finalCountry = user.country || null;
+            finalCountryCode = user.country_code || null;
+            finalLatitude = user.latitude || null;
+            finalLongitude = user.longitude || null;
+            // Build location string if not provided
+            if (!finalLocation && (finalCity || finalState)) {
+              finalLocation = [finalCity, finalState].filter(Boolean).join(', ');
+            }
+          }
+        } catch (err) {
+          console.error('Error fetching user location for product:', err.message);
+        }
+      }
 
       // Insert product
       const productResult = await client.query(
@@ -53,9 +97,11 @@ class ProductsService {
           cost_price, sku, barcode, category_id, brand, stock_quantity, 
           low_stock_threshold, weight, dimensions, images, video_url, tags, 
           status, is_featured, owner_type, owner_id, seo_title, seo_description, 
-          meta_keywords, created_by
+          meta_keywords, created_by,
+          location, zip_code, city, state, country, country_code, latitude, longitude
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, 
-                  $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+                  $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26,
+                  $27, $28, $29, $30, $31, $32, $33, $34)
         RETURNING *`,
         [
           title || name, slug, description, short_description, price, compare_at_price,
@@ -63,7 +109,10 @@ class ProductsService {
           low_stock_threshold || 10, weight, JSON.stringify(dimensions || {}),
           JSON.stringify(images || []), video_url, JSON.stringify(tags || []),
           status || 'draft', is_featured || false, owner_type || 'User',
-          owner_id || userId, seo_title, seo_description, meta_keywords, userId
+          owner_id || userId, seo_title, seo_description, meta_keywords, userId,
+          finalLocation || null, finalZipCode || null, finalCity || null, 
+          finalState || null, finalCountry || null, finalCountryCode || null,
+          finalLatitude || null, finalLongitude || null
         ]
       );
 
@@ -345,7 +394,9 @@ class ProductsService {
         'compare_at_price', 'cost_price', 'sku', 'barcode', 'category_id', 
         'brand', 'stock_quantity', 'low_stock_threshold', 'weight', 
         'dimensions', 'images', 'video_url', 'tags', 'status', 'is_featured',
-        'seo_title', 'seo_description', 'meta_keywords'
+        'seo_title', 'seo_description', 'meta_keywords',
+        // Location fields
+        'location', 'zip_code', 'city', 'state', 'country', 'country_code', 'latitude', 'longitude'
       ];
 
       const updates = [];

@@ -16,7 +16,17 @@ class PostsController {
       metadata, 
       scheduled_at,
       comments_enabled,
-      shared_product_id
+      shared_product_id,
+      // New location fields
+      zip_code,
+      zipCode,
+      city,
+      state,
+      country,
+      country_code,
+      countryCode,
+      latitude,
+      longitude
     } = req.body;
     
     const userId = req.user.id;
@@ -57,7 +67,15 @@ class PostsController {
         metadata,
         scheduledAt: scheduled_at,
         commentsEnabled: comments_enabled,
-        sharedProductId: shared_product_id
+        sharedProductId: shared_product_id,
+        // New location fields
+        zipCode: zipCode || zip_code,
+        city,
+        state,
+        country,
+        countryCode: countryCode || country_code,
+        latitude,
+        longitude
       });
 
       // Upload attachments if any

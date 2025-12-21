@@ -26,17 +26,50 @@ const uploadToR2 = async (buffer, key, contentType) => {
 
 class PostsService {
   // Create a new post
-  // Create a new post
   async createPost({
     userId, content, imageUrl, videoUrl, linkPreview, sharedProductId,
-    title, postType, visibility, tags, mentions, location, metadata, scheduledAt, commentsEnabled
+    title, postType, visibility, tags, mentions, location, metadata, scheduledAt, commentsEnabled,
+    // New location fields
+    zipCode, city, state, country, countryCode, latitude, longitude
   }) {
+    // If structured location fields not provided, try to get from user profile
+    let finalZipCode = zipCode;
+    let finalCity = city;
+    let finalState = state;
+    let finalCountry = country;
+    let finalCountryCode = countryCode;
+    let finalLatitude = latitude;
+    let finalLongitude = longitude;
+
+    // Auto-populate from user profile if location fields are not provided
+    if (!finalCity && !finalZipCode && !finalLatitude) {
+      try {
+        const userResult = await pool.query(
+          `SELECT city, region as state, country_name as country, country as country_code, 
+                  latitude, longitude FROM users WHERE id = $1`,
+          [userId]
+        );
+        if (userResult.rows.length > 0) {
+          const user = userResult.rows[0];
+          finalCity = user.city || null;
+          finalState = user.state || null;
+          finalCountry = user.country || null;
+          finalCountryCode = user.country_code || null;
+          finalLatitude = user.latitude || null;
+          finalLongitude = user.longitude || null;
+        }
+      } catch (err) {
+        console.error('Error fetching user location for post:', err.message);
+      }
+    }
+
     const result = await pool.query(
       `INSERT INTO posts (
         user_id, content, image_url, video_url, link_preview, shared_product_id,
-        title, post_type, visibility, tags, mentions, location, metadata, scheduled_at, comments_enabled
+        title, post_type, visibility, tags, mentions, location, metadata, scheduled_at, comments_enabled,
+        zip_code, city, state, country, country_code, latitude, longitude
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
       RETURNING *`,
       [
         userId,
@@ -53,7 +86,14 @@ class PostsService {
         location || null,
         JSON.stringify(metadata || {}),
         scheduledAt || null,
-        commentsEnabled !== undefined ? commentsEnabled : true
+        commentsEnabled !== undefined ? commentsEnabled : true,
+        finalZipCode || null,
+        finalCity || null,
+        finalState || null,
+        finalCountry || null,
+        finalCountryCode || null,
+        finalLatitude || null,
+        finalLongitude || null
       ]
     );
 
@@ -368,7 +408,12 @@ class PostsService {
 
   // Update post
   async updatePost(postId, userId, updates) {
-    const { content, title, visibility, postType, tags, mentions, location, commentsEnabled, comments_enabled, metadata } = updates;
+    const { 
+      content, title, visibility, postType, tags, mentions, location, 
+      commentsEnabled, comments_enabled, metadata,
+      // New location fields
+      zipCode, zip_code, city, state, country, countryCode, country_code, latitude, longitude
+    } = updates;
     const commentsEnabledValue = commentsEnabled !== undefined ? commentsEnabled : comments_enabled;
 
     // Build dynamic SET clause to handle boolean values properly
@@ -411,6 +456,37 @@ class PostsService {
     if (metadata !== undefined) {
       setClauses.push(`metadata = $${paramCount++}`);
       values.push(JSON.stringify(metadata));
+    }
+    // New location fields
+    const finalZipCode = zipCode !== undefined ? zipCode : zip_code;
+    if (finalZipCode !== undefined) {
+      setClauses.push(`zip_code = $${paramCount++}`);
+      values.push(finalZipCode);
+    }
+    if (city !== undefined) {
+      setClauses.push(`city = $${paramCount++}`);
+      values.push(city);
+    }
+    if (state !== undefined) {
+      setClauses.push(`state = $${paramCount++}`);
+      values.push(state);
+    }
+    if (country !== undefined) {
+      setClauses.push(`country = $${paramCount++}`);
+      values.push(country);
+    }
+    const finalCountryCode = countryCode !== undefined ? countryCode : country_code;
+    if (finalCountryCode !== undefined) {
+      setClauses.push(`country_code = $${paramCount++}`);
+      values.push(finalCountryCode);
+    }
+    if (latitude !== undefined) {
+      setClauses.push(`latitude = $${paramCount++}`);
+      values.push(latitude);
+    }
+    if (longitude !== undefined) {
+      setClauses.push(`longitude = $${paramCount++}`);
+      values.push(longitude);
     }
 
     // Always update these
