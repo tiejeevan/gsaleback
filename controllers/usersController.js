@@ -23,27 +23,27 @@ exports.getMe = async (req, res) => {
     // Get client IP address
     const ip = req.ip || req.connection.remoteAddress || req.headers['x-forwarded-for'];
     console.log('🔍 Detected IP address:', ip);
-    
+
     // First, fetch current user to check if location needs updating
     let user = await userService.getById(req.user.id);
     if (!user)
       return res.status(404).json({ success: false, message: 'User not found' });
-    
+
     // Check if we need to update location:
     // 1. No location data exists (city is null)
     // 2. Location is older than 24 hours
     // 3. IP address changed
-    const needsUpdate = !user.city || 
-                        !user.location_last_updated ||
-                        (new Date() - new Date(user.location_last_updated)) > 24 * 60 * 60 * 1000 ||
-                        user.ip_address !== ip;
-    
+    const needsUpdate = !user.city ||
+      !user.location_last_updated ||
+      (new Date() - new Date(user.location_last_updated)) > 24 * 60 * 60 * 1000 ||
+      user.ip_address !== ip;
+
     if (needsUpdate) {
       console.log('🔄 Location needs update (missing, old, or IP changed)');
       try {
         const locationData = await externalLocationService.getLocationWithFallback(ip);
         console.log('📍 Location data:', locationData);
-        
+
         // Update database
         const query = `
           UPDATE users 
@@ -59,7 +59,7 @@ exports.getMe = async (req, res) => {
             location_last_updated = NOW()
           WHERE id = $9
         `;
-        
+
         const pool = require('../db');
         await pool.query(query, [
           ip,
@@ -72,9 +72,9 @@ exports.getMe = async (req, res) => {
           locationData.longitude,
           req.user.id
         ]);
-        
+
         console.log('✅ Location updated successfully');
-        
+
         // Fetch user again with updated location
         user = await userService.getById(req.user.id);
       } catch (err) {
@@ -84,7 +84,7 @@ exports.getMe = async (req, res) => {
     } else {
       console.log('✓ Using cached location (updated recently)');
     }
-    
+
     // Add currency and language info based on country
     if (user.country) {
       const completeLocation = locationService.getCompleteLocationInfo(user.country, {
@@ -99,7 +99,33 @@ exports.getMe = async (req, res) => {
       });
       user.location_info = completeLocation;
     }
-    
+
+    // Fetch unread counts for notifications and messages (optimization to reduce initial API calls)
+    const pool = require('../db');
+
+    try {
+      // Get unread notifications count
+      const notificationsResult = await pool.query(
+        `SELECT COUNT(*) as count FROM notifications 
+         WHERE recipient_user_id = $1 AND read = false`,
+        [req.user.id]
+      );
+      user.unread_notifications_count = parseInt(notificationsResult.rows[0].count) || 0;
+
+      // Get unread messages count (sum of all chat unread counts)
+      const messagesResult = await pool.query(
+        `SELECT COALESCE(SUM(unread_count), 0) as count FROM user_chat_list 
+         WHERE user_id = $1 AND hidden = FALSE`,
+        [req.user.id]
+      );
+      user.unread_messages_count = parseInt(messagesResult.rows[0].count) || 0;
+    } catch (countErr) {
+      console.error('Error fetching unread counts:', countErr);
+      // Default to 0 if there's an error (don't fail the whole request)
+      user.unread_notifications_count = 0;
+      user.unread_messages_count = 0;
+    }
+
     res.json({ success: true, user });
   } catch (err) {
     console.error('Error fetching self:', err);
@@ -161,11 +187,11 @@ exports.deactivateMe = async (req, res) => {
 exports.searchUsersForMentions = async (req, res) => {
   try {
     const { q } = req.query;
-    
+
     if (!q || q.trim().length < 1) {
       return res.json({ success: true, users: [] });
     }
-    
+
     const users = await userService.searchForMentions(q.trim(), req.user.id);
     res.json({ success: true, users });
   } catch (err) {
@@ -178,11 +204,11 @@ exports.searchUsersForMentions = async (req, res) => {
 exports.searchActiveUsers = async (req, res) => {
   try {
     const { q } = req.query;
-    
+
     if (!q || q.trim().length < 2) {
       return res.json({ success: true, users: [] });
     }
-    
+
     const users = await userService.searchActiveUsers(q.trim(), req.user.id);
     res.json({ success: true, users });
   } catch (err) {
@@ -195,17 +221,17 @@ exports.searchActiveUsers = async (req, res) => {
 exports.getUserSuggestions = async (req, res) => {
   try {
     const { q, limit } = req.query;
-    
+
     if (!q || q.trim().length < 2) {
       return res.json({ success: true, suggestions: [], count: 0 });
     }
-    
+
     const result = await userService.getUserSuggestions(
-      q.trim(), 
-      req.user.id, 
+      q.trim(),
+      req.user.id,
       limit ? parseInt(limit) : 5
     );
-    
+
     res.json({ success: true, ...result });
   } catch (err) {
     console.error('Error getting user suggestions:', err);
